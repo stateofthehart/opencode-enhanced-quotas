@@ -1,6 +1,6 @@
 # OpenCode Enhanced Quotas
 
-`@ereinha/opencode-enhanced-quotas` is an OpenCode plugin + CLI that aggregates quota and rate-limit usage from multiple AI providers in one table.
+`stateofthehart/opencode-enhanced-quotas` is an OpenCode plugin + CLI that aggregates quota and rate-limit usage from multiple AI providers in one table.
 
 It supports:
 - in-chat footer display
@@ -27,7 +27,7 @@ Provider failures are isolated, so one failing provider does not break the full 
 ### Local plugin (recommended for active development)
 
 ```bash
-git clone https://github.com/ereinha/opencode-enhanced-quotas ~/.opencode/plugins/opencode-enhanced-quotas
+git clone https://github.com/stateofthehart/opencode-enhanced-quotas ~/.opencode/plugins/opencode-enhanced-quotas
 cd ~/.opencode/plugins/opencode-enhanced-quotas
 npm install
 npm run build
