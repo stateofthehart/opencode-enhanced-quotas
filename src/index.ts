@@ -13,6 +13,10 @@ import {
 import { logger } from "./logger.js";
 import { getPluginState } from "./plugin-state.js";
 import { DEBUG_LOG_FILE } from "./utils/paths.js";
+import {
+    isQuotaCommand,
+    normalizeCommandName,
+} from "./utils/command-normalization.js";
 
 /**
  * Extended message type with additional fields that may be present at runtime.
@@ -216,7 +220,7 @@ export const QuotaHubPlugin: Plugin = async ({
             };
             config.command["mymodels"] = {
                 template: "/mymodels",
-                description: "Show quota usage filtered by current model",
+                description: "Show quota usage for all configured providers",
             };
             config.command["usage-logs"] = {
                 template: "/usage-logs",
@@ -225,7 +229,9 @@ export const QuotaHubPlugin: Plugin = async ({
         },
 
         "command.execute.before": async (input) => {
-            if (input.command === "usage-logs") {
+            const commandName = normalizeCommandName(input.command);
+
+            if (commandName === "usage-logs") {
                 const logs = await readRecentDebugLogs();
                 await client.session.prompt({
                     path: { id: input.sessionID },
@@ -243,21 +249,17 @@ export const QuotaHubPlugin: Plugin = async ({
                 throw new Error("COMMAND_HANDLED");
             }
 
-            if (input.command === "usage" || input.command === "mymodels") {
+            if (isQuotaCommand(commandName) && commandName !== "usage-logs") {
                 await ensureInit();
                 const config = quotaService.getConfig();
-                
-                // Fetch fresh quotas on command (or use cache if desired, but fresh is better for explicit command)
-                // We'll use the service's getQuotas which uses providers directly, bypassing the cache loop for freshness
-                // unless we want strictly cached data. Let's force a fetch.
-                const results = await quotaService.getQuotas();
-                
-                const filteredResults = input.command === "mymodels"
-                    ? quotaService.processQuotas(results, { 
-                        // We might not have context here easily, but we can try to get it from last message
-                        // For now, "mymodels" might behave same as usage if we can't get context
-                      })
-                    : quotaService.processQuotas(results);
+
+                const filteredResults =
+                    commandName === "mymodels"
+                        ? await quotaService.getCommandQuotas({
+                              // Current command hook input does not include reliable
+                              // model/provider context for filtering.
+                          })
+                        : await quotaService.getQuotas();
 
                 const lines = renderQuotaTable(filteredResults, {
                     progressBarConfig: config.progressBar,

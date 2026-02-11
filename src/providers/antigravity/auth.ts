@@ -1,4 +1,6 @@
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { ANTIGRAVITY_ACCOUNTS_FILE } from "../../utils/paths.js";
 
 /**
@@ -18,7 +20,8 @@ const TOKEN_URL = "https://oauth2.googleapis.com/token";
 
 interface StoredAccount {
   email: string;
-  refreshToken: string;
+  refreshToken?: string;
+  refresh_token?: string;
   projectId?: string;
   managedProjectId?: string;
   addedAt: number;
@@ -53,27 +56,63 @@ function getAccountsFilePath(): string {
   return ANTIGRAVITY_ACCOUNTS_FILE();
 }
 
+function getLegacyAccountsFilePath(): string {
+  return join(homedir(), ".opencode", "antigravity-accounts.json");
+}
+
 async function loadAccounts(): Promise<AccountsFile> {
-  const accountsPath = getAccountsFilePath();
+  const primaryPath = getAccountsFilePath();
+  const legacyPath = getLegacyAccountsFilePath();
+  const paths = primaryPath === legacyPath ? [primaryPath] : [primaryPath, legacyPath];
 
-  try {
-    const content = await readFile(accountsPath, "utf-8");
-    const data = JSON.parse(content) as AccountsFile;
+  for (const accountsPath of paths) {
+    try {
+      const content = await readFile(accountsPath, "utf-8");
+      const data = JSON.parse(content) as AccountsFile;
 
-    if (!data.accounts || data.accounts.length === 0) {
-      throw new Error("No accounts found in antigravity-accounts.json");
+      if (!data.accounts || data.accounts.length === 0) {
+        throw new Error("No accounts found in antigravity-accounts.json");
+      }
+
+      let normalized = false;
+      const normalizedAccounts = data.accounts.map((account) => {
+        if (!account.refreshToken && account.refresh_token) {
+          normalized = true;
+          const { refresh_token, ...rest } = account;
+          return {
+            ...rest,
+            refreshToken: refresh_token,
+          };
+        }
+        return account;
+      });
+
+      const normalizedData: AccountsFile = {
+        ...data,
+        accounts: normalizedAccounts,
+      };
+
+      if (normalized) {
+        try {
+          await writeFile(accountsPath, JSON.stringify(normalizedData, null, 2));
+        } catch {
+          // Best-effort persistence: keep working with normalized in-memory data.
+        }
+      }
+
+      return normalizedData;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        continue;
+      }
+      throw error;
     }
-
-    return data;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      throw new Error(
-        "Antigravity accounts file not found.\n" +
-          "Run 'opencode auth login' first to authenticate with Google.",
-      );
-    }
-    throw error;
   }
+
+  throw new Error(
+    "Antigravity accounts file not found.\n" +
+      "Run 'opencode auth login' first to authenticate with Google.",
+  );
 }
 
 export async function hasCloudCredentials(): Promise<boolean> {
@@ -139,18 +178,26 @@ export async function getCloudCredentials(): Promise<CloudAuthCredentials> {
     };
   }
 
-  const { accessToken, expiresAt } = await refreshAccessToken(activeAccount.refreshToken);
+  const refreshToken = activeAccount.refreshToken ?? activeAccount.refresh_token;
+  if (!refreshToken) {
+    throw new Error(
+      "Active Antigravity account is missing a refresh token. Run 'opencode auth login'.",
+    );
+  }
+
+  const { accessToken, expiresAt } = await refreshAccessToken(refreshToken);
+  const projectId = activeAccount.projectId ?? activeAccount.managedProjectId;
   
   cachedCredential = {
     accessToken,
-    projectId: activeAccount.projectId,
+    projectId,
     email: activeAccount.email,
     expiresAt,
   };
 
   return {
     accessToken,
-    projectId: activeAccount.projectId,
+    projectId,
     email: activeAccount.email,
   };
 }

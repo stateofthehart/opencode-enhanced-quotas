@@ -187,22 +187,14 @@ export class QuotaService {
         return this.predictionEngine;
     }
 
-    /**
-     * Returns the aggregation service used by this service.
-     * Useful for testing or for other services that need aggregation capabilities.
-     */
-    getAggregationService(): IAggregationService {
-        return this.aggregationService;
-    }
-
-    async getQuotas(context?: { providerId?: string; modelId?: string }): Promise<QuotaData[]> {
+    private async fetchRawQuotas(): Promise<QuotaData[]> {
         const providers = this.getProviders();
 
         logger.debug(
             "quota_service:get_quotas_start",
             { providerCount: providers.length, ids: providers.map((p) => p.id) },
         );
-        
+
         if (providers.length === 0) return [];
 
         const results = await Promise.all(
@@ -229,12 +221,48 @@ export class QuotaService {
             })
         );
 
-        const processed = this.processQuotas(results.flat(), context);
+        return results.flat();
+    }
+
+    /**
+     * Returns the aggregation service used by this service.
+     * Useful for testing or for other services that need aggregation capabilities.
+     */
+    getAggregationService(): IAggregationService {
+        return this.aggregationService;
+    }
+
+    async getQuotas(context?: { providerId?: string; modelId?: string }): Promise<QuotaData[]> {
+        const rawResults = await this.fetchRawQuotas();
+        const processed = this.processQuotas(rawResults, context);
         logger.debug(
             "quota_service:get_quotas_end",
             { totalCount: processed.length },
         );
         return processed;
+    }
+
+    async getCommandQuotas(context?: { providerId?: string; modelId?: string }): Promise<QuotaData[]> {
+        const rawResults = await this.fetchRawQuotas();
+        const processed = this.processQuotasForCommand(rawResults, context);
+        logger.debug(
+            "quota_service:get_command_quotas_end",
+            { totalCount: processed.length },
+        );
+        return processed;
+    }
+
+    processQuotasForCommand(data: QuotaData[], context?: { providerId?: string; modelId?: string }): QuotaData[] {
+        const originalAggregatedGroups = this.config.aggregatedGroups;
+        const originalShowUnaggregated = this.config.showUnaggregated;
+        this.config.aggregatedGroups = [];
+        this.config.showUnaggregated = true;
+        try {
+            return this.processQuotas(data, context);
+        } finally {
+            this.config.aggregatedGroups = originalAggregatedGroups;
+            this.config.showUnaggregated = originalShowUnaggregated;
+        }
     }
 
     processQuotas(data: QuotaData[], context?: { providerId?: string; modelId?: string }): QuotaData[] {

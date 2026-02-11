@@ -109,10 +109,11 @@ async function fetchQuota(token: string): Promise<QuotaData[]> {
       const usedPct = Math.round((1 - bucket.remainingFraction) * 100);
       const resetMs = new Date(bucket.resetTime).getTime() - Date.now();
       const shortModel = model.replace("models/", "").replace("gemini-", "g");
+      const displayName = shortModel === "gemini" ? "Gemini" : `Gemini ${shortModel}`;
 
       results.push({
         id: `gemini-${shortModel}`,
-        providerName: "Gemini",
+        providerName: displayName,
         used: usedPct,
         limit: 100,
         unit: "%",

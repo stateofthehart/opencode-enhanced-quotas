@@ -33,7 +33,11 @@ npm install
 npm run build
 ```
 
-If your OpenCode setup auto-loads plugins from `~/.opencode/plugins`, nothing else is required.
+OpenCode currently favors these plugin directories:
+- global: `~/.config/opencode/plugins`
+- project: `.opencode/plugins`
+
+If your setup still uses `~/.opencode/plugins`, it can work, but prefer `~/.config/opencode/plugins` for current releases.
 
 ### NPM plugin
 
@@ -50,8 +54,8 @@ If using npm plugin registration in OpenCode config:
 ## Commands
 
 Inside OpenCode:
-- `/usage` - show full quota table
-- `/mymodels` - show model-filtered quota view
+- `/usage` - show full quota table (normal processing, aggregation-aware)
+- `/mymodels` - show unaggregated provider/model rows (not auto-scoped to current chat model yet)
 - `/usage-logs` - show recent plugin debug logs from `~/.local/share/opencode/quotas-debug.log`
 
 Terminal:
@@ -134,6 +138,13 @@ export GEMINI_OAUTH_CLIENT_SECRET="..."
   - z.ai / MiniMax: API key config files
 - Keep provider CLI credentials fresh (Gemini/Claude).
 
+### Notes on standard vs headless modes
+- Command behavior is the same in both modes (`/usage`, `/mymodels`, `opencode-quotas`).
+- The difference is credential discovery reliability:
+  - Standard mode: browser/keyring and local app credential stores are usually available.
+  - Headless mode: local browser/keyring stores are often unavailable; explicit credential files are more reliable.
+- Cursor is the main provider where this distinction matters most in practice.
+
 ### Standard environment file convention
 
 This project reads runtime secrets from `process.env`. If you prefer a central file, keep one at:
@@ -209,6 +220,44 @@ npm run build
 COOKIE="$(jq -r '.cookie' ~/.config/opencode/cursor-auth.json)"
 curl -sS "https://cursor.com/api/usage-summary" -H "Accept: application/json" -H "Cookie: $COOKIE" | jq .
 ```
+
+### CLI is still using old package behavior
+- Check all command resolutions:
+
+```bash
+type -a opencode-quotas
+```
+
+- Check what your active binary points to:
+
+```bash
+readlink -f "$(command -v opencode-quotas)"
+```
+
+- If the active path points to an old cache/symlink (for example `~/.local/bin/opencode-quotas` -> `~/.cache/opencode/...`), remove the stale link and refresh shell command cache:
+
+```bash
+rm -f ~/.local/bin/opencode-quotas
+hash -r
+```
+
+- For a local-dev sanity check, run the repo build directly:
+
+```bash
+node dist/cli.js
+```
+
+### Google auth for Antigravity and Gemini at the same time
+- They are independent auth flows and can coexist.
+- Antigravity uses OpenCode auth accounts file:
+  - `~/.config/opencode/antigravity-accounts.json`
+  - fallback: `~/.opencode/antigravity-accounts.json`
+- Gemini uses Gemini CLI OAuth file:
+  - `~/.gemini/oauth_creds.json`
+- Keep both files present to use both providers simultaneously.
+- If one provider fails, re-auth only that provider:
+  - Antigravity: `opencode auth login`
+  - Gemini: `gemini auth login`
 
 ### Claude weekly shows `ERR` at 100%
 - This is expected behavior: you are at limit.
