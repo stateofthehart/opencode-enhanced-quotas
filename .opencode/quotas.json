@@ -1,0 +1,4 @@
+{
+  "$schema": "../schemas/quotas.schema.json",
+  "debug": true
+}

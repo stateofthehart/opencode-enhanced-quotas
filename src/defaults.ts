@@ -1,0 +1,118 @@
+import { type QuotaConfig } from "./interfaces.js";
+
+// Default configuration for quota rendering and grouping
+export const DEFAULT_CONFIG: QuotaConfig = {
+    displayMode: "simple",
+    footer: true,
+    showFooterTitle: true,
+    debug: false,
+    enableExperimentalGithub: true, // Enable GitHub Copilot support
+    progressBar: {
+        color: false,
+        gradients: [
+            { threshold: 0.5, color: "green" },
+            { threshold: 0.8, color: "yellow" },
+            { threshold: 1.0, color: "red" },
+        ],
+    },
+    table: {
+        header: true,
+    },
+    filterByCurrentModel: false,
+    showUnaggregated: false,
+    predictionShortWindowMinutes: 5,
+    predictionWindowMinutes: 60,
+    aggregatedGroups: [
+        {
+            id: "ag-flash",
+            name: "Antigravity Flash",
+            patterns: ["flash", "-flash", "gemini-.*-flash"],
+            providerId: "antigravity",
+            strategy: "most_critical",
+        },
+        {
+            id: "ag-pro",
+            name: "Antigravity Pro",
+            patterns: ["pro", "gemini.*pro", "gemini-1.5-pro"],
+            providerId: "antigravity",
+            strategy: "most_critical",
+        },
+        {
+            id: "ag-premium",
+            name: "Antigravity Premium",
+            patterns: ["claude", "gpt", "o1"],
+            providerId: "antigravity",
+            strategy: "most_critical",
+        },
+        {
+            id: "codex-smart",
+            name: "Codex Usage",
+            sources: ["codex-primary", "codex-secondary"],
+            strategy: "most_critical",
+        },
+        {
+            id: "claude-session",
+            name: "Claude Session",
+            sources: ["claude-5h"],
+            strategy: "most_critical",
+        },
+        {
+            id: "claude-weekly",
+            name: "Claude Weekly",
+            sources: ["claude-7d"],
+            strategy: "most_critical",
+        },
+        {
+            id: "copilot-usage",
+            name: "Copilot Premium",
+            sources: ["copilot-premium"],
+            strategy: "most_critical",
+        },
+        {
+            id: "copilot-chat-usage",
+            name: "Copilot Chat",
+            sources: ["copilot-chat"],
+            strategy: "most_critical",
+        },
+        {
+            id: "cursor-usage",
+            name: "Cursor Usage",
+            sources: ["cursor-requests"],
+            strategy: "most_critical",
+        },
+        {
+            id: "zai-tokens",
+            name: "z.ai Tokens",
+            sources: ["zai-tokens"],
+            strategy: "most_critical",
+        },
+        {
+            id: "zai-time",
+            name: "z.ai MCP",
+            sources: ["zai-time"],
+            strategy: "most_critical",
+        },
+        {
+            id: "minimax-usage",
+            name: "MiniMax Prompts",
+            sources: ["minimax-prompts"],
+            strategy: "most_critical",
+        },
+        {
+            id: "jetbrains-usage",
+            name: "JetBrains AI",
+            sources: ["jetbrains-tokens"],
+            strategy: "most_critical",
+        },
+        {
+            id: "gemini-usage",
+            name: "Gemini",
+            patterns: ["gemini-"],
+            providerId: "gemini",
+            strategy: "most_critical",
+        },
+    ],
+    historyMaxAgeHours: 24,
+    historyResetThreshold: 20,
+    pollingInterval: 60_000,
+};

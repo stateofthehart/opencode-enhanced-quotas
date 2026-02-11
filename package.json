@@ -1,0 +1,45 @@
+{
+  "name": "@ereinha/opencode-enhanced-quotas",
+  "version": "1.2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "opencode-quotas": "./dist/cli.js"
+  },
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "description": "Enhanced quota monitoring plugin for OpenCode with /usage and /mymodels commands",
+  "author": "ereinha",
+  "license": "MIT",
+  "keywords": [
+    "opencode",
+    "plugin",
+    "quota",
+    "monitoring",
+    "usage",
+    "models"
+  ],
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "^1.1.3",
+    "@opencode-ai/sdk": "^1.1.10",
+    "@ai-sdk/provider": "^3.0.2",
+    "zod": "^3.24.4",
+    "boxen": "^8.0.1",
+    "chalk": "^5.4.1",
+    "table": "^6.9.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3",
+    "@types/bun": "^1.2.13",
+    "@types/node": "^22.15.17"
+  }
+}
