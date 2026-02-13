@@ -19,6 +19,13 @@ Current providers:
 - z.ai
 - MiniMax
 - JetBrains AI (optional/local)
+- OpenRouter
+- NVIDIA NIM
+- Cerebras
+- Fireworks
+- Cloudflare Workers AI
+- Hugging Face
+- Groq
 
 Provider failures are isolated, so one failing provider does not break the full table.
 
@@ -61,7 +68,31 @@ Inside OpenCode:
 Terminal:
 - `opencode-quotas` - show quota table
 - `opencode-quotas --provider <id> --model <id>` - filtered output
+- `opencode-quotas auth doctor` - detect credential sources, missing fields, and validation state
+- `opencode-quotas auth doctor --probe --verbose` - run one-word probe calls for header-based providers and print detailed diagnostics
+- `opencode-quotas auth login <provider>` - launch provider login flow (delegates to OpenCode/native auth commands)
+- `opencode-quotas auth setup [provider]` - interactive setup to fill missing fields and validate
 - `opencode-quotas help` - CLI help
+
+Auth helper notes:
+- The doctor/setup flow prefers OpenCode credentials from `~/.local/share/opencode/auth.json`.
+- OAuth-managed providers are configured via OpenCode login, not provider JSON files:
+  - Antigravity: `opencode auth login`
+  - Codex/OpenAI: `opencode auth login openai`
+  - Copilot: `opencode auth login github-copilot`
+  - Claude: `opencode auth login anthropic`
+  - OpenRouter: `opencode auth login openrouter`
+  - Nvidia: `opencode auth login nvidia`
+  - Groq: `opencode auth login groq`
+  - Hugging Face: `opencode auth login huggingface`
+  - Fireworks: `opencode auth login fireworks-ai`
+  - Cloudflare Workers AI: `opencode auth login cloudflare-workers-ai`
+  - Cerebras: `opencode auth login cerebras`
+- If required fields are missing (for example Cloudflare `accountId`), setup prompts for only the missing values.
+- Setup writes missing values to `~/.config/opencode/<provider>-auth.json` so users do not need to handcraft JSON files.
+- `WRN connected ...` in doctor output usually means auth is valid but that provider did not expose explicit quota numbers on the probe endpoint.
+
+Provider implementation and telemetry notes live in `docs/<provider>.md` (for example `docs/openrouter.md`, `docs/zai.md`, `docs/minimax.md`).
 
 ## Provider Authentication Patterns
 
@@ -126,6 +157,98 @@ export GEMINI_OAUTH_CLIENT_SECRET="..."
 - Source: local JetBrains XML usage files
 - Notes: Optional. Useful only if you use JetBrains AI Assistant.
 
+### OpenRouter
+- Source: `OPENROUTER_API_KEY` or `~/.config/opencode/openrouter-auth.json`
+- Recommended auth file:
+
+```json
+{
+  "apiKey": "or-..."
+}
+```
+
+- Quota source: `GET https://openrouter.ai/api/v1/key` (authoritative key usage/limits)
+- Notes: Best telemetry quality among API-key providers because OpenRouter exposes direct key-level limits.
+
+### NVIDIA NIM
+- Source: `NVIDIA_NIM_API_KEY` or `NGC_API_KEY` or `~/.config/opencode/nvidia-nim-auth.json`
+- Recommended auth file:
+
+```json
+{
+  "apiKey": "nvapi-..."
+}
+```
+
+- Quota source: no public dedicated quota endpoint in docs; plugin reads documented API headers when available and otherwise reports connected status.
+- Notes: treat as trial/prototyping access unless your account shows explicit limits in NVIDIA dashboard.
+
+### Cerebras
+- Source: `CEREBRAS_API_KEY` or `~/.config/opencode/cerebras-auth.json`
+- Recommended auth file:
+
+```json
+{
+  "apiKey": "csk-..."
+}
+```
+
+- Quota source: shared tier often lacks public key-level usage endpoint; plugin reads available rate-limit headers and otherwise reports connected status.
+- Notes: dedicated endpoint metrics APIs exist for enterprise/dedicated setups, but may not be available in all accounts.
+
+### Fireworks
+- Source: `FIREWORKS_API_KEY` or `~/.config/opencode/fireworks-auth.json`
+- Recommended auth file:
+
+```json
+{
+  "apiKey": "fwk-..."
+}
+```
+
+- Quota source: plugin uses documented rate-limit headers from Fireworks API responses.
+- Notes: account metrics export APIs also exist, but header-based telemetry is simpler and near real-time.
+
+### Cloudflare Workers AI
+- Source: `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` or `~/.config/opencode/cloudflare-auth.json`
+- Recommended auth file:
+
+```json
+{
+  "apiToken": "cf-...",
+  "accountId": "<cloudflare-account-id>"
+}
+```
+
+- Quota source: no general public quota endpoint for Workers AI in REST docs; plugin checks API connectivity and catches hard rate-limit responses.
+- Notes: usage is mainly dashboard-centric today.
+
+### Hugging Face
+- Source: `HUGGINGFACE_API_KEY` or `HF_TOKEN` or `HUGGINGFACEHUB_API_TOKEN` or `~/.config/opencode/huggingface-auth.json`
+- Recommended auth file:
+
+```json
+{
+  "apiKey": "hf_..."
+}
+```
+
+- Quota source: documented `RateLimit` / `RateLimit-Policy` headers when present.
+- Notes: if headers are unavailable for your account/route, plugin reports connected status.
+
+### Groq
+- Source: `GROQ_API_KEY` or `~/.config/opencode/groq-auth.json`
+- Recommended auth file:
+
+```json
+{
+  "apiKey": "gsk_..."
+}
+```
+
+- Quota source: documented `x-ratelimit-*` and `retry-after` headers from Groq APIs.
+- Notes: headers provide real-time request/token window state.
+
 ## Headless vs Standard Setup
 
 ### Standard desktop setup
@@ -166,6 +289,17 @@ Common environment keys:
 - `Z_AI_API_KEY`
 - `MINIMAX_API_KEY`
 - `CURSOR_COOKIE`
+- `OPENROUTER_API_KEY`
+- `NVIDIA_NIM_API_KEY`
+- `NGC_API_KEY`
+- `CEREBRAS_API_KEY`
+- `FIREWORKS_API_KEY`
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_ACCOUNT_ID`
+- `HUGGINGFACE_API_KEY`
+- `HF_TOKEN`
+- `HUGGINGFACEHUB_API_TOKEN`
+- `GROQ_API_KEY`
 
 ## Linux Dependencies (for browser cookie/keyring path)
 
@@ -213,7 +347,9 @@ npm run build
 
 ### Provider missing from table
 - Run `opencode-quotas` in terminal first.
-- Confirm auth file/token exists.
+- Confirm provider login exists in OpenCode (`opencode auth list`) or run `opencode auth login <provider>`.
+- Run `opencode-quotas auth doctor` to see which credential source was detected (`opencode`, `env`, `config`) and what is missing.
+- Use `opencode-quotas auth setup <provider>` to fill missing fields interactively.
 - For Cursor, validate cookie manually with:
 
 ```bash
@@ -249,7 +385,7 @@ node dist/cli.js
 
 ### Google auth for Antigravity and Gemini at the same time
 - They are independent auth flows and can coexist.
-- Antigravity uses OpenCode auth accounts file:
+- Antigravity uses OpenCode auth + accounts file:
   - `~/.config/opencode/antigravity-accounts.json`
   - fallback: `~/.opencode/antigravity-accounts.json`
 - Gemini uses Gemini CLI OAuth file:
@@ -258,6 +394,7 @@ node dist/cli.js
 - If one provider fails, re-auth only that provider:
   - Antigravity: `opencode auth login`
   - Gemini: `gemini auth login`
+- Workaround for separate Google identities: login Antigravity and Gemini separately in that order, then avoid re-running the other login unless needed (each flow updates a different local auth store).
 
 ### Claude weekly shows `ERR` at 100%
 - This is expected behavior: you are at limit.

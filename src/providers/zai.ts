@@ -9,34 +9,32 @@
  * Returns TOKENS_LIMIT and TIME_LIMIT quota entries.
  */
 
-import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import type { QuotaData, IQuotaProvider } from "../interfaces.js";
 import { logger } from "../logger.js";
+import { readApiKey } from "./provider-utils.js";
 
 // ---------- Auth ----------
 
 async function getApiKey(): Promise<string | null> {
-  // 1. Env var
-  if (process.env.Z_AI_API_KEY) return process.env.Z_AI_API_KEY;
-
-  // 2. Config file
-  try {
-    const configPath = join(homedir(), ".config", "opencode", "zai-config.json");
-    const config = JSON.parse(await readFile(configPath, "utf-8"));
-    if (config.apiKey) return config.apiKey;
-  } catch {
-    // no config
-  }
-
-  return null;
+  return readApiKey(
+    ["Z_AI_API_KEY", "ZAI_API_KEY", "BIGMODEL_API_KEY"],
+    ["zai-config.json", "zai-auth.json", "zai.json", "bigmodel-auth.json"],
+    ["apiKey", "api_key", "token", "key", "Z_AI_API_KEY"],
+    ["zai", "z.ai", "bigmodel"],
+  );
 }
 
-function getEndpoint(): string {
-  if (process.env.Z_AI_QUOTA_URL) return process.env.Z_AI_QUOTA_URL;
-  const host = process.env.Z_AI_API_HOST || "https://api.z.ai";
-  return `${host}/api/monitor/usage/quota/limit`;
+function getEndpoints(): string[] {
+  if (process.env.Z_AI_QUOTA_URL) return [process.env.Z_AI_QUOTA_URL];
+  if (process.env.Z_AI_API_HOST) {
+    const host = process.env.Z_AI_API_HOST.replace(/\/$/, "");
+    return [`${host}/api/monitor/usage/quota/limit`];
+  }
+
+  return [
+    "https://api.z.ai/api/monitor/usage/quota/limit",
+    "https://open.bigmodel.cn/api/monitor/usage/quota/limit",
+  ];
 }
 
 // ---------- API ----------
@@ -78,19 +76,30 @@ async function fetchQuota(apiKey: string): Promise<QuotaData[]> {
   const timer = setTimeout(() => ctrl.abort(), 15_000);
 
   try {
-    const res = await fetch(getEndpoint(), {
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        Accept: "application/json",
-      },
-      signal: ctrl.signal,
-    });
+    let body: ZaiResponse | null = null;
+    let lastError: string | null = null;
 
-    if (!res.ok) {
-      throw new Error(`z.ai API ${res.status}: ${await res.text()}`);
+    for (const endpoint of getEndpoints()) {
+      const res = await fetch(endpoint, {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          Accept: "application/json",
+        },
+        signal: ctrl.signal,
+      });
+
+      if (!res.ok) {
+        lastError = `z.ai API ${res.status} @ ${endpoint}: ${await res.text()}`;
+        continue;
+      }
+
+      body = (await res.json()) as ZaiResponse;
+      break;
     }
 
-    const body = (await res.json()) as ZaiResponse;
+    if (!body) {
+      throw new Error(lastError ?? "z.ai API failed on all endpoints");
+    }
     
     // Check if we got a generic success without quota data
     if (!body.data?.limits) {
@@ -162,8 +171,16 @@ export function createZaiProvider(): IQuotaProvider {
       try {
         return await fetchQuota(apiKey);
       } catch (err) {
-        logger.debug(`[zai] fetch failed: ${err instanceof Error ? err.message : err}`);
-        return [];
+        const message = err instanceof Error ? err.message : String(err);
+        logger.warn(`[zai] fetch failed: ${message}`);
+        return [{
+          id: "zai-status",
+          providerName: "z.ai",
+          used: 0,
+          limit: null,
+          unit: "status",
+          info: "auth detected; request failed",
+        }];
       }
     },
   };

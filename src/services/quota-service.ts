@@ -18,6 +18,13 @@ import { createZaiProvider } from "../providers/zai.js";
 import { createMiniMaxProvider } from "../providers/minimax.js";
 import { createJetBrainsProvider } from "../providers/jetbrains.js";
 import { createGeminiProvider } from "../providers/gemini.js";
+import { createOpenRouterProvider } from "../providers/openrouter.js";
+import { createNvidiaNimProvider } from "../providers/nvidia-nim.js";
+import { createCerebrasProvider } from "../providers/cerebras.js";
+import { createFireworksProvider } from "../providers/fireworks.js";
+import { createCloudflareWorkersAIProvider } from "../providers/cloudflare-workers-ai.js";
+import { createHuggingFaceProvider } from "../providers/huggingface.js";
+import { createGroqProvider } from "../providers/groq.js";
 import { formatDurationMs } from "../utils/time.js";
 import { logger } from "../logger.js";
 import { LinearRegressionPredictionEngine, NullPredictionEngine } from "./prediction-engine.js";
@@ -168,6 +175,69 @@ export class QuotaService {
         } catch (e) {
             logger.error("init:provider_failed", { id: "gemini", error: e });
             logger.warn("init:provider_failed_visible", { id: "gemini" });
+        }
+
+        // Register OpenRouter
+        try {
+            registry.register(createOpenRouterProvider());
+            logger.debug("init:provider_registered", { id: "openrouter" });
+        } catch (e) {
+            logger.error("init:provider_failed", { id: "openrouter", error: e });
+            logger.warn("init:provider_failed_visible", { id: "openrouter" });
+        }
+
+        // Register NVIDIA NIM
+        try {
+            registry.register(createNvidiaNimProvider());
+            logger.debug("init:provider_registered", { id: "nvidia-nim" });
+        } catch (e) {
+            logger.error("init:provider_failed", { id: "nvidia-nim", error: e });
+            logger.warn("init:provider_failed_visible", { id: "nvidia-nim" });
+        }
+
+        // Register Cerebras
+        try {
+            registry.register(createCerebrasProvider());
+            logger.debug("init:provider_registered", { id: "cerebras" });
+        } catch (e) {
+            logger.error("init:provider_failed", { id: "cerebras", error: e });
+            logger.warn("init:provider_failed_visible", { id: "cerebras" });
+        }
+
+        // Register Fireworks
+        try {
+            registry.register(createFireworksProvider());
+            logger.debug("init:provider_registered", { id: "fireworks" });
+        } catch (e) {
+            logger.error("init:provider_failed", { id: "fireworks", error: e });
+            logger.warn("init:provider_failed_visible", { id: "fireworks" });
+        }
+
+        // Register Cloudflare Workers AI
+        try {
+            registry.register(createCloudflareWorkersAIProvider());
+            logger.debug("init:provider_registered", { id: "cloudflare-workers-ai" });
+        } catch (e) {
+            logger.error("init:provider_failed", { id: "cloudflare-workers-ai", error: e });
+            logger.warn("init:provider_failed_visible", { id: "cloudflare-workers-ai" });
+        }
+
+        // Register Hugging Face
+        try {
+            registry.register(createHuggingFaceProvider());
+            logger.debug("init:provider_registered", { id: "huggingface" });
+        } catch (e) {
+            logger.error("init:provider_failed", { id: "huggingface", error: e });
+            logger.warn("init:provider_failed_visible", { id: "huggingface" });
+        }
+
+        // Register Groq
+        try {
+            registry.register(createGroqProvider());
+            logger.debug("init:provider_registered", { id: "groq" });
+        } catch (e) {
+            logger.error("init:provider_failed", { id: "groq", error: e });
+            logger.warn("init:provider_failed_visible", { id: "groq" });
         }
     }
 
@@ -468,6 +538,11 @@ export class QuotaService {
 
     private filterQuotas(quotas: QuotaData[], context?: { providerId?: string; modelId?: string }): QuotaData[] {
         let results = [...quotas];
+        const showStatusRows = process.env.OPENCODE_QUOTAS_SHOW_STATUS === "1";
+
+        if (!showStatusRows) {
+            results = results.filter((data) => data.unit !== "status");
+        }
 
         // Filter out disabled quotas
         const disabledIds = new Set(this.config.disabled || []);

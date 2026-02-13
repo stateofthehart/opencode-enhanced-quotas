@@ -9,32 +9,43 @@
  * Returns prompts used/total in a 5-hour rolling window.
  */
 
-import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import type { QuotaData, IQuotaProvider } from "../interfaces.js";
 import { logger } from "../logger.js";
+import { readApiKey } from "./provider-utils.js";
 
 // ---------- Auth ----------
 
 async function getApiKey(): Promise<string | null> {
-  if (process.env.MINIMAX_API_KEY) return process.env.MINIMAX_API_KEY;
-
-  try {
-    const configPath = join(homedir(), ".config", "opencode", "minimax-config.json");
-    const config = JSON.parse(await readFile(configPath, "utf-8"));
-    if (config.apiKey) return config.apiKey;
-  } catch {
-    // no config
-  }
-
-  return null;
+  return readApiKey(
+    ["MINIMAX_API_KEY", "MINIMAX_KEY"],
+    ["minimax-config.json", "minimax-auth.json", "minimax.json"],
+    ["apiKey", "api_key", "token", "key", "MINIMAX_API_KEY"],
+    ["minimax", "minimaxio", "minimax.io"],
+  );
 }
 
-function getEndpoint(): string {
-  if (process.env.MINIMAX_REMAINS_URL) return process.env.MINIMAX_REMAINS_URL;
-  const host = process.env.MINIMAX_HOST || "https://api.minimax.io";
-  return `${host}/v1/coding_plan/remains`;
+function getEndpoints(): string[] {
+  if (process.env.MINIMAX_REMAINS_URL) return [process.env.MINIMAX_REMAINS_URL];
+
+  const envHost = process.env.MINIMAX_HOST;
+  const hosts = envHost
+    ? [envHost]
+    : ["https://api.minimax.io", "https://api.minimaxi.com", "https://platform.minimax.io"];
+
+  const paths = [
+    "/v1/coding_plan/remains",
+    "/v1/api/openplatform/coding_plan/remains",
+  ];
+
+  const endpoints: string[] = [];
+  for (const host of hosts) {
+    const normalizedHost = host.replace(/\/$/, "");
+    for (const path of paths) {
+      endpoints.push(`${normalizedHost}${path}`);
+    }
+  }
+
+  return endpoints;
 }
 
 // ---------- API ----------
@@ -71,20 +82,31 @@ async function fetchQuota(apiKey: string): Promise<QuotaData[]> {
   const timer = setTimeout(() => ctrl.abort(), 15_000);
 
   try {
-    const res = await fetch(getEndpoint(), {
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      signal: ctrl.signal,
-    });
+    let data: MiniMaxResponse | null = null;
+    let lastError: string | null = null;
 
-    if (!res.ok) {
-      throw new Error(`MiniMax API ${res.status}: ${await res.text()}`);
+    for (const endpoint of getEndpoints()) {
+      const res = await fetch(endpoint, {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        signal: ctrl.signal,
+      });
+
+      if (!res.ok) {
+        lastError = `MiniMax API ${res.status} @ ${endpoint}: ${await res.text()}`;
+        continue;
+      }
+
+      data = (await res.json()) as MiniMaxResponse;
+      break;
     }
 
-    const data = (await res.json()) as MiniMaxResponse;
+    if (!data) {
+      throw new Error(lastError ?? "MiniMax remains API failed on all endpoints");
+    }
     
     // Check for error response (e.g., not coding plan token)
     if (data.base_resp && data.base_resp.status_code !== 0) {
@@ -94,7 +116,9 @@ async function fetchQuota(apiKey: string): Promise<QuotaData[]> {
         used: 0,
         limit: null,
         unit: "status",
-        info: data.base_resp.status_msg,
+        info: data.base_resp.status_msg
+          .replace(/insufficient\s+balance/i, "insufficient balance (billing)")
+          .replace(/insufficient\s+quota/i, "insufficient quota (billing)"),
       }];
     }
     
@@ -142,8 +166,16 @@ export function createMiniMaxProvider(): IQuotaProvider {
       try {
         return await fetchQuota(apiKey);
       } catch (err) {
-        logger.debug(`[minimax] fetch failed: ${err instanceof Error ? err.message : err}`);
-        return [];
+        const message = err instanceof Error ? err.message : String(err);
+        logger.warn(`[minimax] fetch failed: ${message}`);
+        return [{
+          id: "minimax-status",
+          providerName: "MiniMax",
+          used: 0,
+          limit: null,
+          unit: "status",
+          info: "auth detected; request failed",
+        }];
       }
     },
   };

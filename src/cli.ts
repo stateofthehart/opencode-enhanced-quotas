@@ -4,6 +4,12 @@ import { HistoryService } from "./services/history-service.js";
 import { renderQuotaTable } from "./ui/quota-table.js";
 import { startGeminiLoginServer, refreshGeminiToken } from "./utils/gemini-auth.js";
 import { startCursorLoginServer } from "./utils/cursor-auth.js";
+import {
+    runAuthDoctor,
+    runAuthLogin,
+    runAuthSetup,
+    showAuthHelp,
+} from "./auth/commands.js";
 
 async function showHelp() {
     console.log(`
@@ -15,6 +21,7 @@ USAGE:
 COMMANDS:
   (default)         Show quota usage table
   login <provider>  Authenticate with a provider
+  auth <subcommand> Credential doctor and setup helpers
   help              Show this help message
 
 LOGIN PROVIDERS:
@@ -29,6 +36,9 @@ OPTIONS:
 EXAMPLES:
   opencode-quotas                    # Show all quotas
   opencode-quotas login cursor       # Login to Cursor
+  opencode-quotas auth doctor        # Check auth health for API providers
+  opencode-quotas auth doctor --probe --verbose
+  opencode-quotas auth setup groq    # Configure provider credentials interactively
   opencode-quotas --provider codex   # Show only Codex quotas
 `);
 }
@@ -182,8 +192,49 @@ async function main() {
         return;
     }
 
-    // Default: show quotas
-    await showQuotas();
+    // Handle auth helpers
+    if (command === "auth") {
+        const subcommand = args[1];
+        if (!subcommand || subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
+            await showAuthHelp();
+            return;
+        }
+
+        if (subcommand === "doctor") {
+            const verbose = args.includes("--verbose") || args.includes("-v");
+            const probe = args.includes("--probe");
+            await runAuthDoctor({ verbose, probe });
+            return;
+        }
+
+        if (subcommand === "setup") {
+            const setupTarget = args[2];
+            if (setupTarget === "--help" || setupTarget === "-h" || setupTarget === "help") {
+                await showAuthHelp();
+                return;
+            }
+            await runAuthSetup(setupTarget);
+            return;
+        }
+
+        if (subcommand === "login") {
+            const loginTarget = args[2];
+            if (!loginTarget || args.includes("--help") || args.includes("-h") || loginTarget === "help") {
+                await showAuthHelp();
+                return;
+            }
+            await runAuthLogin(loginTarget);
+            return;
+        }
+
+        console.error(`\n❌ Unknown auth subcommand: ${subcommand}`);
+        await showAuthHelp();
+        process.exit(1);
+    }
+
+    console.error(`\n❌ Unknown command: ${command}`);
+    await showHelp();
+    process.exit(1);
 }
 
 main().catch(console.error);

@@ -1,7 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { ANTIGRAVITY_ACCOUNTS_FILE } from "../../utils/paths.js";
+import { ANTIGRAVITY_ACCOUNTS_FILE, AUTH_FILE } from "../../utils/paths.js";
 
 /**
  * PUBLIC OAUTH CREDENTIALS - INTENTIONALLY COMMITTED
@@ -38,6 +38,12 @@ interface TokenResponse {
   access_token: string;
   expires_in: number;
   token_type: string;
+}
+
+interface OpenCodeGoogleAuth {
+  access?: string;
+  refresh?: string;
+  expires?: number;
 }
 
 export interface CloudAuthCredentials {
@@ -115,12 +121,48 @@ async function loadAccounts(): Promise<AccountsFile> {
   );
 }
 
+async function loadOpenCodeGoogleAuth(): Promise<OpenCodeGoogleAuth | null> {
+  try {
+    const raw = await readFile(AUTH_FILE(), "utf-8");
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const google = parsed.google;
+    if (!google || typeof google !== "object" || Array.isArray(google)) return null;
+
+    const rec = google as Record<string, unknown>;
+    return {
+      access: typeof rec.access === "string" ? rec.access : undefined,
+      refresh: typeof rec.refresh === "string" ? rec.refresh : undefined,
+      expires: typeof rec.expires === "number" ? rec.expires : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function getOpenCodeGoogleAccessToken(): Promise<{ accessToken: string; expiresAt?: number } | null> {
+  const googleAuth = await loadOpenCodeGoogleAuth();
+  if (!googleAuth?.access) return null;
+
+  // Use only if token is still valid (with 5 minute buffer).
+  if (typeof googleAuth.expires === "number") {
+    const fiveMinutesInMs = 5 * 60 * 1000;
+    if (googleAuth.expires <= Date.now() + fiveMinutesInMs) {
+      return null;
+    }
+  }
+
+  return {
+    accessToken: googleAuth.access,
+    expiresAt: googleAuth.expires,
+  };
+}
+
 export async function hasCloudCredentials(): Promise<boolean> {
   try {
     await loadAccounts();
     return true;
   } catch {
-    return false;
+    return (await getOpenCodeGoogleAccessToken()) !== null;
   }
 }
 
@@ -156,7 +198,30 @@ async function refreshAccessToken(refreshToken: string): Promise<{ accessToken: 
 }
 
 export async function getCloudCredentials(): Promise<CloudAuthCredentials> {
-  const accountsFile = await loadAccounts();
+  let accountsFile: AccountsFile | null = null;
+  try {
+    accountsFile = await loadAccounts();
+  } catch {
+    // Fallback path: if OpenCode Google OAuth access token exists and is valid,
+    // use it directly even when accounts file is missing or stale.
+    const googleToken = await getOpenCodeGoogleAccessToken();
+    if (googleToken) {
+      cachedCredential = {
+        accessToken: googleToken.accessToken,
+        expiresAt: googleToken.expiresAt ?? Date.now() + 10 * 60 * 1000,
+        email: "google-oauth",
+      };
+
+      return {
+        accessToken: googleToken.accessToken,
+        email: "google-oauth",
+      };
+    }
+    throw new Error(
+      "Antigravity credentials missing or expired. Run 'opencode auth login' and ensure antigravity accounts are available.",
+    );
+  }
+
   const activeAccount =
     accountsFile.accounts[accountsFile.activeIndex] ?? accountsFile.accounts[0];
 
@@ -185,7 +250,19 @@ export async function getCloudCredentials(): Promise<CloudAuthCredentials> {
     );
   }
 
-  const { accessToken, expiresAt } = await refreshAccessToken(refreshToken);
+  let accessToken: string;
+  let expiresAt: number;
+  try {
+    const refreshed = await refreshAccessToken(refreshToken);
+    accessToken = refreshed.accessToken;
+    expiresAt = refreshed.expiresAt;
+  } catch (error) {
+    // Fallback to OpenCode Google OAuth token if refresh token is invalid.
+    const fallback = await getOpenCodeGoogleAccessToken();
+    if (!fallback) throw error;
+    accessToken = fallback.accessToken;
+    expiresAt = fallback.expiresAt ?? Date.now() + 10 * 60 * 1000;
+  }
   const projectId = activeAccount.projectId ?? activeAccount.managedProjectId;
   
   cachedCredential = {

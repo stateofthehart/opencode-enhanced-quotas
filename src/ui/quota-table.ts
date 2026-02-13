@@ -50,9 +50,18 @@ export function renderQuotaTable(
 
         const normalizedName = validated.providerName.replace(/_/g, " ");
         const name = colorize(normalizedName, "cyan", useColor);
+        const isStatusRow = validated.unit === "status";
+        const hasMeasuredUsageWithoutLimit =
+            (validated.limit === null || validated.limit <= 0) &&
+            typeof validated.used === "number" &&
+            Number.isFinite(validated.used) &&
+            validated.used >= 0 &&
+            validated.unit !== "status";
         const status = barParts 
             ? barParts.statusText 
-            : (validated.info === "unlimited" ? colorize("OK ", "green", useColor) : colorize("UNK", "gray", useColor));
+            : ((validated.info === "unlimited" || isStatusRow || hasMeasuredUsageWithoutLimit)
+                ? colorize("OK ", "green", useColor)
+                : colorize("UNK", "gray", useColor));
         
         // Strip "resets in " or "resets at " prefix for cleaner table display
         const resetRaw = validated.reset?.replace(/^resets (in|at) /, "") || "";
@@ -68,7 +77,13 @@ export function renderQuotaTable(
             cells: {
                 name,
                 bar: barParts ? barParts.bar : (isUnlimited ? colorize("Unlimited", "green", useColor) : ""),
-                percent: barParts ? barParts.percent : "",
+                percent: barParts
+                    ? barParts.percent
+                    : (hasMeasuredUsageWithoutLimit
+                        ? (validated.unit === "usd"
+                            ? `${validated.used}$`
+                            : `${validated.used} ${validated.unit}`)
+                        : ""),
                 value: barParts ? barParts.valuePart : `${validated.used} ${validated.unit}`,
                 reset,
                 ettl,
