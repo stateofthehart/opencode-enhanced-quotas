@@ -26,6 +26,8 @@ Current providers:
 - Cloudflare Workers AI
 - Hugging Face
 - Groq
+- Together
+- DeepInfra
 
 Provider failures are isolated, so one failing provider does not break the full table.
 
@@ -88,9 +90,12 @@ Auth helper notes:
   - Fireworks: `opencode auth login fireworks-ai`
   - Cloudflare Workers AI: `opencode auth login cloudflare-workers-ai`
   - Cerebras: `opencode auth login cerebras`
+  - Together: `opencode auth login together` (if available in your OpenCode version)
+  - DeepInfra: `opencode auth login deepinfra` (if available in your OpenCode version)
 - If required fields are missing (for example Cloudflare `accountId`), setup prompts for only the missing values.
 - Setup writes missing values to `~/.config/opencode/<provider>-auth.json` so users do not need to handcraft JSON files.
 - `WRN connected ...` in doctor output usually means auth is valid but that provider did not expose explicit quota numbers on the probe endpoint.
+- If `opencode auth login <provider>` is unavailable in your OpenCode build, use `opencode-quotas auth setup <provider>` instead.
 
 Provider implementation and telemetry notes live in `docs/<provider>.md` (for example `docs/openrouter.md`, `docs/zai.md`, `docs/minimax.md`).
 

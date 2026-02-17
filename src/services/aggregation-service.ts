@@ -60,29 +60,40 @@ export class AggregationService implements IAggregationService {
                 predictedReset: `in ${formatDurationMs(minTime)} (predicted)`
             };
         }
-        return representative;
+        return {
+            ...representative,
+            info: representative.info ? `${representative.info} (Aggregated)` : "Aggregated"
+        };
     }
 
     /**
      * Aggregates quotas by selecting the one with highest usage ratio.
      */
     aggregateMax(quotas: QuotaData[]): QuotaData {
-        return quotas.reduce((a, b) => {
+        const result = quotas.reduce((a, b) => {
             const aRatio = a.limit !== null && a.limit > 0 ? a.used / a.limit : 0;
             const bRatio = b.limit !== null && b.limit > 0 ? b.used / b.limit : 0;
             return aRatio > bRatio ? a : b;
         });
+        return {
+            ...result,
+            info: result.info ? `${result.info} (Aggregated)` : "Aggregated"
+        };
     }
 
     /**
      * Aggregates quotas by selecting the one with lowest usage ratio.
      */
     aggregateMin(quotas: QuotaData[]): QuotaData {
-        return quotas.reduce((a, b) => {
+        const result = quotas.reduce((a, b) => {
             const aRatio = a.limit !== null && a.limit > 0 ? a.used / a.limit : 0;
             const bRatio = b.limit !== null && b.limit > 0 ? b.used / b.limit : 0;
             return aRatio < bRatio ? a : b;
         });
+        return {
+            ...result,
+            info: result.info ? `${result.info} (Aggregated)` : "Aggregated"
+        };
     }
 
     /**

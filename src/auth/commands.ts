@@ -23,6 +23,10 @@ import { createCopilotProvider } from "../providers/copilot.js";
 import { createAnthropicProvider } from "../providers/anthropic.js";
 import { createCursorProvider } from "../providers/cursor.js";
 import { createGeminiProvider } from "../providers/gemini.js";
+import { createTogetherProvider } from "../providers/together.js";
+import { createDeepInfraProvider } from "../providers/deepinfra.js";
+import { createMistralProvider } from "../providers/mistral.js";
+import { createCohereProvider } from "../providers/cohere.js";
 
 type Source = "opencode" | "env" | "config" | "missing";
 
@@ -72,6 +76,10 @@ const LOGIN_PROVIDER_MAP: Record<string, { cmd: string; args: string[] }> = {
   groq: { cmd: "opencode", args: ["auth", "login", "groq"] },
   zai: { cmd: "opencode", args: ["auth", "login", "zai"] },
   minimax: { cmd: "opencode", args: ["auth", "login", "minimax"] },
+  together: { cmd: "opencode", args: ["auth", "login", "together"] },
+  deepinfra: { cmd: "opencode", args: ["auth", "login", "deepinfra"] },
+  mistral: { cmd: "opencode", args: ["auth", "login", "mistral"] },
+  cohere: { cmd: "opencode", args: ["auth", "login", "cohere"] },
 };
 
 const PROVIDERS: ProviderSpec[] = [
@@ -321,6 +329,82 @@ const PROVIDERS: ProviderSpec[] = [
     telemetry: "authoritative",
     guidance: "If auth exists but fails, refresh MiniMax key or region settings.",
   },
+  {
+    id: "together",
+    name: "Together",
+    openCodeAliases: ["together"],
+    configFile: "together-auth.json",
+    fields: [
+      {
+        id: "apiKey",
+        label: "API Key",
+        aliases: ["apiKey", "api_key", "apiToken", "token", "key", "TOGETHER_API_KEY"],
+        env: ["TOGETHER_API_KEY", "TOGETHER_KEY"],
+        required: true,
+        secret: true,
+      },
+    ],
+    setupMode: "interactive",
+    telemetry: "headers",
+    guidance: "Together rate-limit headers are endpoint and model dependent.",
+  },
+  {
+    id: "deepinfra",
+    name: "DeepInfra",
+    openCodeAliases: ["deepinfra"],
+    configFile: "deepinfra-auth.json",
+    fields: [
+      {
+        id: "apiKey",
+        label: "API Key",
+        aliases: ["apiKey", "api_key", "apiToken", "token", "key", "DEEPINFRA_API_KEY"],
+        env: ["DEEPINFRA_API_KEY", "DEEPINFRA_TOKEN"],
+        required: true,
+        secret: true,
+      },
+    ],
+    setupMode: "interactive",
+    telemetry: "headers",
+    guidance: "DeepInfra rate-limit headers are not guaranteed on all routes.",
+  },
+  {
+    id: "mistral",
+    name: "Mistral",
+    openCodeAliases: ["mistral"],
+    configFile: "mistral-auth.json",
+    fields: [
+      {
+        id: "apiKey",
+        label: "API Key",
+        aliases: ["apiKey", "api_key", "apiToken", "token", "key", "MISTRAL_API_KEY"],
+        env: ["MISTRAL_API_KEY", "MISTRAL_KEY"],
+        required: true,
+        secret: true,
+      },
+    ],
+    setupMode: "interactive",
+    telemetry: "headers",
+    guidance: "Mistral free tier: 1 RPS, 500k tokens/min, 1B tokens/month. Check limits at https://admin.mistral.ai/plateforme/limits",
+  },
+  {
+    id: "cohere",
+    name: "Cohere",
+    openCodeAliases: ["cohere"],
+    configFile: "cohere-auth.json",
+    fields: [
+      {
+        id: "apiKey",
+        label: "API Key",
+        aliases: ["apiKey", "api_key", "apiToken", "token", "key", "COHERE_API_KEY"],
+        env: ["COHERE_API_KEY", "COHERE_KEY"],
+        required: true,
+        secret: true,
+      },
+    ],
+    setupMode: "interactive",
+    telemetry: "headers",
+    guidance: "Cohere trial: 20 req/min, 1000 calls/month. Production: 500 req/min. Rate limits by model type.",
+  },
 ];
 
 const providerValidators: Record<string, () => Promise<QuotaData[]>> = {
@@ -339,6 +423,10 @@ const providerValidators: Record<string, () => Promise<QuotaData[]>> = {
   anthropic: async () => createAnthropicProvider().fetchQuota(),
   cursor: async () => createCursorProvider().fetchQuota(),
   gemini: async () => createGeminiProvider().fetchQuota(),
+  together: async () => createTogetherProvider().fetchQuota(),
+  deepinfra: async () => createDeepInfraProvider().fetchQuota(),
+  mistral: async () => createMistralProvider().fetchQuota(),
+  cohere: async () => createCohereProvider().fetchQuota(),
 };
 
 function maskSecret(value: string): string {
@@ -428,7 +516,10 @@ async function validateProvider(providerID: string): Promise<{ status: "ok" | "w
     }
 
     const infoText = rows.map((row) => row.info ?? "").join(" | ").toLowerCase();
-    if (infoText.includes("request failed") || infoText.includes("invalid") || infoText.includes("unauthorized")) {
+    if (infoText.includes("insufficient balance") || infoText.includes("billing") || infoText.includes("not coding plan token")) {
+      return { status: "error", detail: `billing: ${rows[0]?.info ?? "insufficient balance"}` };
+    }
+    if (infoText.includes("request failed") || infoText.includes("invalid") || infoText.includes("unauthorized") || infoText.includes("invalid_grant")) {
       return { status: "error", detail: rows[0]?.info ?? "request failed" };
     }
     if (infoText.includes("set cloudflare_account_id") || infoText.includes("grant account-list permission")) {
@@ -490,7 +581,8 @@ function parseRateLimitFromHeaders(headers: Headers): { requests?: string; token
   const reqRemain =
     headers.get("x-ratelimit-remaining-requests") ??
     headers.get("x-ratelimit-remaining-requests-minute") ??
-    headers.get("x-ratelimit-remaining-requests-day");
+    headers.get("x-ratelimit-remaining-requests-day") ??
+    headers.get("ratelimit-remaining");
 
   const tokLimit =
     headers.get("x-ratelimit-limit-tokens") ??
@@ -505,6 +597,30 @@ function parseRateLimitFromHeaders(headers: Headers): { requests?: string; token
     requests: reqLimit && reqRemain ? `${reqRemain}/${reqLimit}` : undefined,
     tokens: tokLimit && tokRemain ? `${tokRemain}/${tokLimit}` : undefined,
   };
+}
+
+function chooseProbeModel(providerID: string, modelIDs: string[]): string | null {
+  if (modelIDs.length === 0) return null;
+
+  const preferences: Record<string, RegExp[]> = {
+    openrouter: [/gpt-4o-mini/i, /llama-3\.1-8b-instruct/i, /qwen/i, /gemma/i, /instruct/i],
+    groq: [/llama|mixtral|qwen|gemma/i],
+    fireworks: [/instruct|chat|llama|mixtral|qwen|gemma/i],
+    cerebras: [/instruct|chat|llama|qwen|gpt-oss/i],
+    "nvidia-nim": [/llama-3\.1-8b-instruct/i, /nemotron|mistral|qwen|instruct/i],
+    together: [/instruct|chat|llama|qwen|gemma|mixtral/i],
+    deepinfra: [/instruct|chat|llama|qwen|gemma|mixtral/i],
+    mistral: [/mistral-large|ministral|codestral|devstral|mixtral/i],
+    cohere: [/command-r|command-a|command-r7b|embed|rerank/i],
+  };
+
+  const rules = preferences[providerID] ?? [/chat|instruct/i];
+  for (const rule of rules) {
+    const match = modelIDs.find((id) => rule.test(id));
+    if (match) return match;
+  }
+
+  return modelIDs[0] ?? null;
 }
 
 function extractModelIDs(payload: unknown): string[] {
@@ -535,6 +651,10 @@ async function probeOneWord(
   token: string,
 ): Promise<{ status: "ok" | "warn" | "error"; detail: string }> {
   const endpoints: Record<string, { models: string; chat: string }> = {
+    openrouter: {
+      models: "https://openrouter.ai/api/v1/models",
+      chat: "https://openrouter.ai/api/v1/chat/completions",
+    },
     groq: {
       models: "https://api.groq.com/openai/v1/models",
       chat: "https://api.groq.com/openai/v1/chat/completions",
@@ -550,6 +670,22 @@ async function probeOneWord(
     "nvidia-nim": {
       models: "https://integrate.api.nvidia.com/v1/models",
       chat: "https://integrate.api.nvidia.com/v1/chat/completions",
+    },
+    together: {
+      models: "https://api.together.xyz/v1/models",
+      chat: "https://api.together.xyz/v1/chat/completions",
+    },
+    deepinfra: {
+      models: "https://api.deepinfra.com/v1/openai/models",
+      chat: "https://api.deepinfra.com/v1/openai/chat/completions",
+    },
+    mistral: {
+      models: "https://api.mistral.ai/v1/models",
+      chat: "https://api.mistral.ai/v1/chat/completions",
+    },
+    cohere: {
+      models: "https://api.cohere.ai/v1/models",
+      chat: "https://api.cohere.ai/v2/chat",
     },
   };
 
@@ -575,7 +711,7 @@ async function probeOneWord(
 
     const modelPayload = await modelsRes.json();
     const modelIDs = extractModelIDs(modelPayload);
-    const modelID = modelIDs[0];
+    const modelID = chooseProbeModel(providerID, modelIDs);
     if (!modelID) {
       return { status: "warn", detail: "probe models returned no usable model id" };
     }

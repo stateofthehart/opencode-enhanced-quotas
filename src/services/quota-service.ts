@@ -25,6 +25,10 @@ import { createFireworksProvider } from "../providers/fireworks.js";
 import { createCloudflareWorkersAIProvider } from "../providers/cloudflare-workers-ai.js";
 import { createHuggingFaceProvider } from "../providers/huggingface.js";
 import { createGroqProvider } from "../providers/groq.js";
+import { createTogetherProvider } from "../providers/together.js";
+import { createDeepInfraProvider } from "../providers/deepinfra.js";
+import { createMistralProvider } from "../providers/mistral.js";
+import { createCohereProvider } from "../providers/cohere.js";
 import { formatDurationMs } from "../utils/time.js";
 import { logger } from "../logger.js";
 import { LinearRegressionPredictionEngine, NullPredictionEngine } from "./prediction-engine.js";
@@ -238,6 +242,42 @@ export class QuotaService {
         } catch (e) {
             logger.error("init:provider_failed", { id: "groq", error: e });
             logger.warn("init:provider_failed_visible", { id: "groq" });
+        }
+
+        // Register Together
+        try {
+            registry.register(createTogetherProvider());
+            logger.debug("init:provider_registered", { id: "together" });
+        } catch (e) {
+            logger.error("init:provider_failed", { id: "together", error: e });
+            logger.warn("init:provider_failed_visible", { id: "together" });
+        }
+
+        // Register DeepInfra
+        try {
+            registry.register(createDeepInfraProvider());
+            logger.debug("init:provider_registered", { id: "deepinfra" });
+        } catch (e) {
+            logger.error("init:provider_failed", { id: "deepinfra", error: e });
+            logger.warn("init:provider_failed_visible", { id: "deepinfra" });
+        }
+
+        // Register Mistral
+        try {
+            registry.register(createMistralProvider());
+            logger.debug("init:provider_registered", { id: "mistral" });
+        } catch (e) {
+            logger.error("init:provider_failed", { id: "mistral", error: e });
+            logger.warn("init:provider_failed_visible", { id: "mistral" });
+        }
+
+        // Register Cohere
+        try {
+            registry.register(createCohereProvider());
+            logger.debug("init:provider_registered", { id: "cohere" });
+        } catch (e) {
+            logger.error("init:provider_failed", { id: "cohere", error: e });
+            logger.warn("init:provider_failed_visible", { id: "cohere" });
         }
     }
 
@@ -541,7 +581,7 @@ export class QuotaService {
         const showStatusRows = process.env.OPENCODE_QUOTAS_SHOW_STATUS === "1";
 
         if (!showStatusRows) {
-            results = results.filter((data) => data.unit !== "status");
+            results = results.filter((data) => data.unit !== "status" || data.info?.includes("Aggregated"));
         }
 
         // Filter out disabled quotas

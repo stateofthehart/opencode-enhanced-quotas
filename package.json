@@ -1,6 +1,6 @@
 {
   "name": "@ereinha/opencode-enhanced-quotas",
-  "version": "1.2.3",
+  "version": "1.2.5",
   "type": "module",
   "main": "./dist/index.js",
   "bin": {
