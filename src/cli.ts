@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { createRequire } from "node:module";
 import { QuotaService } from "./services/quota-service.js";
 import { HistoryService } from "./services/history-service.js";
 import { renderQuotaTable } from "./ui/quota-table.js";
@@ -11,9 +12,12 @@ import {
     showAuthHelp,
 } from "./auth/commands.js";
 
+const require = createRequire(import.meta.url);
+const { version } = require("../package.json");
+
 async function showHelp() {
     console.log(`
-OpenCode Enhanced Quotas CLI
+OpenCode Enhanced Quotas CLI v${version}
 
 USAGE:
   opencode-quotas [COMMAND] [OPTIONS]
@@ -23,6 +27,7 @@ COMMANDS:
   login <provider>  Authenticate with a provider
   auth <subcommand> Credential doctor and setup helpers
   help              Show this help message
+  version           Show version information
 
 LOGIN PROVIDERS:
   cursor            Authenticate with Cursor (opens browser)
@@ -32,6 +37,7 @@ OPTIONS:
   --provider <id>   Filter by provider ID
   --model <id>      Filter by model ID  
   --no-color        Disable colored output
+  --version, -v     Show version number
 
 EXAMPLES:
   opencode-quotas                    # Show all quotas
@@ -40,6 +46,7 @@ EXAMPLES:
   opencode-quotas auth doctor --probe --verbose
   opencode-quotas auth setup groq    # Configure provider credentials interactively
   opencode-quotas --provider codex   # Show only Codex quotas
+  opencode-quotas --version          # Show version
 `);
 }
 
@@ -156,6 +163,12 @@ async function main() {
     const args = process.argv.slice(2);
     const command = args[0];
 
+    // Handle version
+    if (command === "--version" || command === "-v" || command === "version") {
+        console.log(version);
+        return;
+    }
+
     // Handle help explicitly
     if (command === "help" || command === "--help" || command === "-h") {
         await showHelp();
@@ -224,6 +237,26 @@ async function main() {
                 return;
             }
             await runAuthLogin(loginTarget);
+            return;
+        }
+
+        if (subcommand === "import") {
+            const envFile = args[2];
+            if (!envFile || args.includes("--help") || args.includes("-h") || envFile === "help") {
+                await showAuthHelp();
+                return;
+            }
+            const { runAuthImport } = await import("./auth/commands.js");
+            await runAuthImport(envFile);
+            return;
+        }
+
+        if (subcommand === "export") {
+            const mask = args.includes("--mask") || args.includes("-m");
+            const outputIdx = args.indexOf("--output");
+            const outputPath = outputIdx !== -1 && outputIdx + 1 < args.length ? args[outputIdx + 1] : undefined;
+            const { runAuthExport } = await import("./auth/commands.js");
+            await runAuthExport(outputPath, mask);
             return;
         }
 

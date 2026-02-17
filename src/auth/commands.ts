@@ -947,6 +947,8 @@ USAGE:
   opencode-quotas auth doctor --probe
   opencode-quotas auth login <provider>
   opencode-quotas auth setup [provider]
+  opencode-quotas auth import <env-file>
+  opencode-quotas auth export [--output <file>] [--mask]
 
 PROVIDERS:
   ${PROVIDERS.map((p) => p.id).join(", ")}
@@ -956,5 +958,83 @@ NOTES:
   - setup prompts for missing/edited fields and writes to ~/.config/opencode/<provider>-auth.json.
   - providers marked as OAuth-managed (Codex/Copilot/Claude/Gemini/Antigravity) are read-only in setup.
   - Secrets are masked in output.
+  - import/export works with OpenCode auth.json for portable API key management.
 `);
+}
+
+import { importAuthFromEnv, exportAuthToEnv } from "./env-manager.js";
+
+export async function runAuthImport(envFilePath: string): Promise<void> {
+  if (!envFilePath) {
+    console.error("\nUsage: opencode-quotas auth import <env-file>");
+    console.error("\nExample:");
+    console.error("  opencode-quotas auth import ./api-keys.env");
+    console.error("\nSupported env vars:");
+    console.error("  ANTHROPIC_API_KEY, CEREBRAS_API_KEY, COHERE_API_KEY,");
+    console.error("  DEEPINFRA_API_KEY, FIREWORKS_API_KEY, GEMINI_API_KEY,");
+    console.error("  GROQ_API_KEY, HUGGINGFACE_API_KEY, MINIMAX_API_KEY,");
+    console.error("  MISTRAL_API_KEY, NVIDIA_API_KEY, OPENROUTER_API_KEY,");
+    console.error("  TOGETHER_API_KEY, ZAI_API_KEY,");
+    console.error("  CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID");
+    process.exit(1);
+  }
+
+  console.log(`\n📥 Importing auth from ${envFilePath}...\n`);
+  
+  try {
+    const result = await importAuthFromEnv(envFilePath);
+    
+    if (result.imported.length > 0) {
+      console.log(`✅ Imported ${result.imported.length} API key provider(s):`);
+      for (const provider of result.imported) {
+        console.log(`   - ${provider}`);
+      }
+    }
+    
+    if (result.oauth.length > 0) {
+      console.log(`\n⚠️  Skipped ${result.oauth.length} OAuth provider(s) (already configured):`);
+      for (const provider of result.oauth) {
+        console.log(`   - ${provider} (use: opencode auth login ${provider})`);
+      }
+    }
+    
+    if (result.skipped.length > 0) {
+      console.log(`\nℹ️  Ignored unknown env vars:`);
+      for (const envVar of result.skipped.slice(0, 5)) {
+        console.log(`   - ${envVar}`);
+      }
+      if (result.skipped.length > 5) {
+        console.log(`   ... and ${result.skipped.length - 5} more`);
+      }
+    }
+    
+    if (result.backupPath) {
+      console.log(`\n💾 Backup created: ${result.backupPath}`);
+    }
+    
+    console.log("\n✨ Import complete! Run 'opencode-quotas auth doctor' to verify.\n");
+  } catch (error) {
+    console.error("\n❌ Import failed:", error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
+}
+
+export async function runAuthExport(outputPath?: string, mask = false): Promise<void> {
+  console.log(mask ? "\n📤 Exporting auth (masked)...\n" : "\n📤 Exporting auth...\n");
+  
+  try {
+    const envContent = await exportAuthToEnv({ mask });
+    
+    if (outputPath) {
+      await writeFile(outputPath, envContent, 'utf-8');
+      console.log(`✅ Auth exported to: ${outputPath}`);
+      console.log(`\n💡 Import on another machine with:`);
+      console.log(`   opencode-quotas auth import ${outputPath}\n`);
+    } else {
+      console.log(envContent);
+    }
+  } catch (error) {
+    console.error("\n❌ Export failed:", error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
 }
