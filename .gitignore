@@ -34,3 +34,4 @@ output_debug.txt
 *.tsbuildinfo
 
 **/.npmrc
+api.env

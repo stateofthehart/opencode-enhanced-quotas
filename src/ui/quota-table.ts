@@ -60,7 +60,7 @@ export function renderQuotaTable(
         const status = barParts 
             ? barParts.statusText 
             : ((validated.info === "unlimited" || isStatusRow || hasMeasuredUsageWithoutLimit)
-                ? colorize("OK ", "green", useColor)
+                ? colorize("OK", "green", useColor)
                 : colorize("UNK", "gray", useColor));
         
         // Strip "resets in " or "resets at " prefix for cleaner table display

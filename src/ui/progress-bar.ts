@@ -104,7 +104,7 @@ export function getQuotaStatusText(
   const color = match ? match.color : sorted[sorted.length - 1]?.color || "red";
 
   switch (color) {
-    case "green": return "OK "; // Space for alignment
+    case "green": return "OK";
     case "yellow": return "WRN";
     case "red": return "ERR";
     default: return "UNK";
