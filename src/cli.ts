@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { QuotaService } from "./services/quota-service.js";
 import { HistoryService } from "./services/history-service.js";
 import { renderQuotaTable } from "./ui/quota-table.js";
+import { renderHealthTable, renderProbeResults, renderCapabilitiesTable, renderDetailedProbeResult, renderAllProvidersHealth } from "./ui/health-table.js";
 import { startGeminiLoginServer, refreshGeminiToken } from "./utils/gemini-auth.js";
 import { startCursorLoginServer } from "./utils/cursor-auth.js";
 import {
@@ -11,6 +12,8 @@ import {
     runAuthSetup,
     showAuthHelp,
 } from "./auth/commands.js";
+import { createProber, getHealthMonitor, PROVIDER_CAPABILITIES } from "./probe/index.js";
+import { serveCommand, showServeHelp } from "./commands/serve.js";
 
 const require = createRequire(import.meta.url);
 const { version } = require("../package.json");
@@ -24,10 +27,20 @@ USAGE:
 
 COMMANDS:
   (default)         Show quota usage table
+  health            Show provider health dashboard
+  models            Show all available models with status
+  freemodels        Show only free tier models
+  serve             Start OpenAI-compatible API Gateway server
   login <provider>  Authenticate with a provider
   auth <subcommand> Credential doctor and setup helpers
   help              Show this help message
   version           Show version information
+
+HEALTH SUBCOMMANDS:
+  health            Show health dashboard for all providers
+  health --probe    Run active probes on all probeable providers
+  health <provider> Show detailed health for a specific provider
+  health --caps     Show provider capabilities table
 
 LOGIN PROVIDERS:
   cursor            Authenticate with Cursor (opens browser)
@@ -36,15 +49,24 @@ LOGIN PROVIDERS:
 OPTIONS:
   --provider <id>   Filter by provider ID
   --model <id>      Filter by model ID  
+  --probe           Run active probes (health command)
+  --caps            Show capabilities table (health command)
   --no-color        Disable colored output
   --version, -v     Show version number
 
 EXAMPLES:
   opencode-quotas                    # Show all quotas
+  opencode-quotas health             # Show health dashboard
+  opencode-quotas health --probe     # Run active probes
+  opencode-quotas health groq        # Detailed health for Groq
   opencode-quotas login cursor       # Login to Cursor
   opencode-quotas auth doctor        # Check auth health for API providers
   opencode-quotas auth doctor --probe --verbose
   opencode-quotas auth setup groq    # Configure provider credentials interactively
+  opencode-quotas serve              # Start API Gateway on default port
+  opencode-quotas serve --port 3000  # Start API Gateway on port 3000
+  opencode-quotas models             # Show available models with state
+  opencode-quotas freemodels         # Show only free tier models
   opencode-quotas --provider codex   # Show only Codex quotas
   opencode-quotas --version          # Show version
 `);
@@ -139,6 +161,20 @@ async function showQuotas() {
         modelId = process.argv[modelIdx + 1];
     }
 
+    // Check for --probe flag to run active probes
+    const shouldProbe = process.argv.includes("--probe");
+    if (shouldProbe) {
+        console.log("\n🔍 Running active probes on all providers...\n");
+        const prober = createProber();
+        const probeResults = await prober.probeAll();
+        const monitor = getHealthMonitor();
+        for (const result of probeResults) {
+            monitor.recordProbe(result);
+        }
+        renderProbeResults(probeResults).forEach(line => console.log(line));
+        return;
+    }
+
     const filteredResults = await quotaService.getQuotas({ providerId, modelId });
 
     if (filteredResults.length === 0) {
@@ -159,25 +195,116 @@ async function showQuotas() {
     console.log(""); // Empty line
 }
 
+async function showHealth(providerId?: string) {
+    if (process.argv.includes("--no-color")) {
+        process.env.OPENCODE_QUOTAS_NO_COLOR = "1";
+    }
+
+    const shouldProbe = process.argv.includes("--probe");
+    const shouldShowCaps = process.argv.includes("--caps");
+
+    if (shouldShowCaps) {
+        renderCapabilitiesTable(PROVIDER_CAPABILITIES).forEach(line => console.log(line));
+        return;
+    }
+
+    const monitor = getHealthMonitor();
+
+    if (shouldProbe) {
+        console.log("\n🔍 Running active probes with model discovery...\n");
+        const prober = createProber();
+        const probeResults = await prober.probeAllModels({ maxModelsPerProvider: 10 });
+        for (const result of probeResults) {
+            monitor.recordProbe(result);
+        }
+        
+        const quotaService = new QuotaService();
+        await quotaService.init(process.cwd(), new HistoryService());
+        const quotas = await quotaService.getQuotas({});
+        
+        renderAllProvidersHealth(probeResults, quotas, PROVIDER_CAPABILITIES).forEach(line => console.log(line));
+        return;
+    }
+
+    if (providerId) {
+        const capability = PROVIDER_CAPABILITIES.find(c => c.id === providerId || c.name.toLowerCase() === providerId.toLowerCase());
+        if (!capability) {
+            console.error(`\n❌ Unknown provider: ${providerId}`);
+            console.error(`Available providers: ${PROVIDER_CAPABILITIES.map(c => c.id).join(", ")}\n`);
+            process.exit(1);
+        }
+
+        if (capability.supportsProbe) {
+            console.log(`\n🔍 Probing ${capability.name}...\n`);
+            const prober = createProber();
+            const result = await prober.probe(capability.id);
+            monitor.recordProbe(result);
+            renderDetailedProbeResult(result).forEach(line => console.log(line));
+        } else {
+            console.log(`\n📊 ${capability.name} doesn't support active probing (OAuth/subscription-based).\n`);
+            console.log("Showing quota status instead:\n");
+            
+            const quotaService = new QuotaService();
+            await quotaService.init(process.cwd(), new HistoryService());
+            const quotas = await quotaService.getQuotas({});
+            const providerQuotas = quotas.filter(q => q.providerName.toLowerCase().includes(providerId.toLowerCase()));
+            
+            if (providerQuotas.length > 0) {
+                for (const q of providerQuotas) {
+                    console.log(`  ${q.providerName}: ${q.used}${q.limit ? `/${q.limit}` : ''} ${q.unit}${q.info ? ` (${q.info})` : ''}`);
+                }
+            } else {
+                console.log("  No quota data available. Run auth doctor to diagnose.");
+            }
+            console.log("");
+        }
+        return;
+    }
+
+    console.log("\n📊 Provider Health Overview\n");
+    console.log("Run 'opencode-quotas health --probe' for active health checks");
+    console.log("Run 'opencode-quotas health --caps' to see provider capabilities\n");
+    
+    renderCapabilitiesTable(PROVIDER_CAPABILITIES).forEach(line => console.log(line));
+}
+
 async function main() {
     const args = process.argv.slice(2);
     const command = args[0];
 
-    // Handle version
-    if (command === "--version" || command === "-v" || command === "version") {
+    if (process.argv.includes("--no-color")) {
+        process.env.OPENCODE_QUOTAS_NO_COLOR = "1";
+    }
+
+    if (command === "--version" || command === "-v") {
         console.log(version);
         return;
     }
 
-    // Handle help explicitly
+    if (command === "version") {
+        console.log(version);
+        return;
+    }
+
     if (command === "help" || command === "--help" || command === "-h") {
         await showHelp();
         return;
     }
-    
-    // No command = show quotas (default behavior)
-    if (!command) {
+
+    if (command === "--probe") {
         await showQuotas();
+        return;
+    }
+
+    if (!command || command.startsWith("--")) {
+        await showQuotas();
+        return;
+    }
+
+    // Handle health command
+    if (command === "health") {
+        const providerArg = args[1] && !args[1].startsWith("--") ? args[1] : undefined;
+        await showHealth(providerArg);
         return;
     }
 
@@ -263,6 +390,52 @@ async function main() {
         console.error(`\n❌ Unknown auth subcommand: ${subcommand}`);
         await showAuthHelp();
         process.exit(1);
+    }
+
+    // Handle models commands
+    if (command === "models") {
+        const { showMyModels, showModelsHelp } = await import("./commands/models.js");
+        
+        if (args.includes("--help") || args.includes("-h")) {
+            await showModelsHelp();
+            return;
+        }
+        
+        await showMyModels(args.slice(1));
+        return;
+    }
+
+    if (command === "freemodels") {
+        const { showFreeModels, showModelsHelp } = await import("./commands/models.js");
+        
+        if (args.includes("--help") || args.includes("-h")) {
+            await showModelsHelp();
+            return;
+        }
+        
+        await showFreeModels(args.slice(1));
+        return;
+    }
+
+    if (command === "serve") {
+        if (args.includes("--help") || args.includes("-h")) {
+            showServeHelp();
+            return;
+        }
+        
+        // Parse serve options
+        const serveOptions: { port?: number; host?: string } = {};
+        const portIndex = args.indexOf("--port");
+        if (portIndex !== -1 && args[portIndex + 1]) {
+            serveOptions.port = parseInt(args[portIndex + 1], 10);
+        }
+        const hostIndex = args.indexOf("--host");
+        if (hostIndex !== -1 && args[hostIndex + 1]) {
+            serveOptions.host = args[hostIndex + 1];
+        }
+        
+        await serveCommand(serveOptions);
+        return;
     }
 
     console.error(`\n❌ Unknown command: ${command}`);

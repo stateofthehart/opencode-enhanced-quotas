@@ -268,3 +268,278 @@ export interface ProgressBarConfig {
     // whose threshold is greater than or equal to the current usage ratio.
     gradients?: GradientLevel[];
 }
+
+// ============================================
+// Phase 1: Active Probe & Health Monitoring
+// ============================================
+
+export type QuotaErrorType =
+    | "rate_limited"
+    | "no_credits"
+    | "auth_expired"
+    | "auth_invalid"
+    | "model_unavailable"
+    | "endpoint_down"
+    | "billing"
+    | "unknown";
+
+export interface QuotaError {
+    type: QuotaErrorType;
+    provider: string;
+    message?: string;
+    resetAt?: Date;
+    retryAfter?: number;
+    fundBalance?: number;
+    model?: string;
+    alternatives?: string[];
+    lastSeen?: Date;
+}
+
+export interface ProbeResult {
+    provider: string;
+    model: string;
+    available: boolean;
+    latencyMs: number;
+    rateLimitRemaining?: number;
+    rateLimitLimit?: number;
+    rateLimitReset?: Date;
+    error?: QuotaError;
+    timestamp: Date;
+    headers?: Record<string, string>;
+}
+
+export interface ProbeConfig {
+    timeout?: number;
+    prompt?: string;
+    maxTokens?: number;
+    maxModelsPerProvider?: number;
+}
+
+export interface ProviderHealth {
+    provider: string;
+    status: "healthy" | "degraded" | "down" | "unknown";
+    lastProbe?: Date;
+    lastSuccess?: Date;
+    latencyMs?: number;
+    avgLatencyMs?: number;
+    errorRate: number;
+    consecutiveFailures: number;
+    totalProbes: number;
+    successfulProbes: number;
+    lastError?: QuotaError;
+    rateLimitRemaining?: number;
+    rateLimitReset?: Date;
+}
+
+export interface IProber {
+    probe(provider: string, model?: string, config?: ProbeConfig): Promise<ProbeResult>;
+    probeAll(config?: ProbeConfig): Promise<ProbeResult[]>;
+    probeAllModels(config?: ProbeConfig): Promise<ProbeResult[]>;
+}
+
+export interface IHealthMonitor {
+    recordProbe(result: ProbeResult): void;
+    getHealth(provider: string): ProviderHealth;
+    getAllHealth(): ProviderHealth[];
+    getAvailableProviders(): string[];
+    getCacheAge(provider: string): number;
+}
+
+export type TelemetryType = "authoritative" | "header-based" | "status-only";
+
+export type RateLimitType = "provider_wide" | "per_model" | "provider_model_specific";
+
+export interface ProviderCapability {
+    id: string;
+    name: string;
+    telemetryType: TelemetryType;
+    supportsProbe: boolean;
+    probeModel?: string;
+    probeEndpoint?: string;
+    requiresAuth: boolean;
+    isFreeTier: boolean;
+    isPayAsYouGo: boolean;
+    isSubscription: boolean;
+    minimumDeposit?: number;
+    depositCurrency?: string;
+    freeCredits?: number;
+    rateLimitType?: RateLimitType;
+    notes?: string;
+}
+
+// ============================================
+// Phase 1.5: Model Discovery & Balance
+// ============================================
+
+export interface ModelInfo {
+    id: string;
+    name?: string;
+    provider: string;
+    contextWindow?: number;
+    pricing?: {
+        prompt: number;
+        completion: number;
+        currency?: string;
+    };
+    isFree: boolean;
+    isAvailable: boolean;
+    capabilities?: string[];
+}
+
+export interface DiscoveredModel extends ModelInfo {
+    discoveredAt: Date;
+    lastChecked: Date;
+    error?: string;
+}
+
+export interface ProviderModelList {
+    provider: string;
+    models: DiscoveredModel[];
+    fetchedAt: Date;
+    error?: string;
+}
+
+export interface BalanceInfo {
+    provider: string;
+    credits?: number;
+    creditsUsd?: number;
+    freeTierRemaining?: number;
+    isPayAsYouGo: boolean;
+    isSubscription: boolean;
+    minimumDeposit?: number;
+    lastUpdated: Date;
+}
+
+export interface IModelDiscovery {
+    discoverModels(provider: string): Promise<ProviderModelList>;
+    discoverAll(): Promise<ProviderModelList[]>;
+    getFreeModels(provider: string): Promise<DiscoveredModel[]>;
+    getAvailableModels(provider: string, minBalance?: number): Promise<DiscoveredModel[]>;
+}
+
+export interface IBalanceChecker {
+    checkBalance(provider: string): Promise<BalanceInfo | null>;
+    checkAllBalances(): Promise<BalanceInfo[]>;
+}
+
+export interface ProviderDiscoveryConfig {
+    id: string;
+    name: string;
+    modelsEndpoint?: string;
+    defaultModels?: string[];
+    balanceEndpoint?: string;
+    rateLimitType: RateLimitType;
+    hasFreeTier: boolean;
+    minimumDeposit?: number;
+    freeModelFilter?: (model: Record<string, unknown>) => boolean;
+    modelIdField?: string;
+    pricingField?: string;
+    accountIdField?: string;
+}
+
+// Model state tracking for timeout and cooldown awareness
+export interface ModelState {
+    provider: string;
+    modelId: string;
+    isAvailable: boolean;
+    lastChecked: Date;
+    lastSuccess?: Date;
+    lastError?: Date;
+    errorCount: number;
+    consecutiveFailures: number;
+    isRateLimited: boolean;
+    rateLimitReset?: Date;
+    isFreeTier: boolean;
+    estimatedCostPerRequest?: number;
+    avgLatencyMs?: number;
+    timeoutCount: number;
+    isDead?: boolean;              // Permanently retired/unavailable
+    deadReason?: string;           // Why it's dead (e.g., "retired", "deprecated")
+    deadSince?: Date;              // When it was marked as dead
+}
+
+export interface ModelFilterOptions {
+    onlyAvailable?: boolean;
+    onlyFree?: boolean;
+    minBalance?: number;
+    maxLatency?: number;
+    excludeRateLimited?: boolean;
+    excludeTimeouts?: boolean;
+    excludeDead?: boolean;           // Exclude permanently retired/dead models
+    excludeCircuitOpen?: boolean;     // Exclude models with open circuit breakers
+}
+
+export interface IModelStateTracker {
+    updateModelState(state: ModelState): Promise<void>;
+    getModelState(provider: string, modelId: string): Promise<ModelState | null>;
+    getAllModelStates(filter?: ModelFilterOptions): Promise<ModelState[]>;
+    getAvailableModels(filter?: ModelFilterOptions): Promise<ModelState[]>;
+    markModelTimeout(provider: string, modelId: string): Promise<void>;
+    markModelRateLimited(provider: string, modelId: string, resetAt?: Date): Promise<void>;
+    markModelSuccess(provider: string, modelId: string, latencyMs: number): Promise<void>;
+    markModelFailure(provider: string, modelId: string, error?: string): Promise<void>;
+    markModelDead(provider: string, modelId: string, reason?: string): Promise<void>;
+    clearOldStates(olderThan: Date): Promise<void>;
+    // Aliases for backward compatibility
+    recordSuccess(provider: string, modelId: string, latencyMs: number): Promise<void>;
+    recordError(provider: string, modelId: string, error: string): Promise<void>;
+}
+
+// === OpenAI-compatible API Types ===
+
+export interface ChatCompletionMessage {
+    role: 'system' | 'user' | 'assistant' | 'function';
+    content: string;
+    name?: string;
+    function_call?: {
+        name: string;
+        arguments: string;
+    };
+}
+
+export interface ChatCompletionRequest {
+    model: string;
+    messages: ChatCompletionMessage[];
+    max_tokens?: number;
+    temperature?: number;
+    top_p?: number;
+    n?: number;
+    stream?: boolean;
+    stop?: string | string[];
+    presence_penalty?: number;
+    frequency_penalty?: number;
+    logit_bias?: Record<string, number>;
+    user?: string;
+}
+
+export interface ChatCompletionChoice {
+    index: number;
+    message: ChatCompletionMessage;
+    finish_reason: 'stop' | 'length' | 'function_call' | 'content_filter' | null;
+}
+
+export interface ChatCompletionResponse {
+    id: string;
+    object: 'chat.completion';
+    created: number;
+    model: string;
+    choices: ChatCompletionChoice[];
+    usage: {
+        prompt_tokens: number;
+        completion_tokens: number;
+        total_tokens: number;
+    };
+}
+
+export interface ModelListResponse {
+    object: 'list';
+    data: {
+        id: string;
+        object: 'model';
+        created: number;
+        owned_by: string;
+        permission: any[];
+        root: string;
+        parent: string | null;
+    }[];
+}
