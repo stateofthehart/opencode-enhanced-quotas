@@ -132,7 +132,7 @@ async function possibleChromePassphrases(): Promise<string[]> {
         ];
         for (const cmd of probes) {
             try {
-                const out = execSync(cmd, { encoding: "utf-8", timeout: 2000 }).trim();
+                const out = execSync(cmd, { encoding: "utf-8", timeout: 2000, stdio: ['pipe', 'pipe', 'ignore'] }).trim();
                 if (out) values.add(out);
             } catch {
                 // ignore probe failures
