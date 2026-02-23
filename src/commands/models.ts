@@ -1,7 +1,7 @@
-import { createModelManager, TrackedModel } from '../models/model-manager';
-import { getModelDiscovery } from '../discovery';
-import { getProber } from '../probe';
-import { PROVIDER_CAPABILITIES } from '../probe/prober';
+import { createModelManager, TrackedModel } from '../models/model-manager.js';
+import { getModelDiscovery } from '../discovery/index.js';
+import { getProber } from '../probe/index.js';
+import { PROVIDER_CAPABILITIES } from '../probe/prober.js';
 
 interface RenderOptions {
   showLatency?: boolean;

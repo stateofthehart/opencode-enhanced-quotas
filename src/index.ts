@@ -93,6 +93,7 @@ export const QuotaHubPlugin: Plugin = async ({
                         refreshIntervalMs: config.pollingInterval ?? 60_000,
                         historyService,
                         debug: !!config.debug,
+                        gatewayUrl: config.gatewayUrl,
                     });
                     quotaCache.start();
                     logger.debug("init:complete");

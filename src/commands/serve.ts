@@ -65,8 +65,12 @@ EXAMPLES:
 ENDPOINTS:
   POST /v1/chat/completions    Chat completion endpoint (OpenAI-compatible)
   GET  /v1/models              List available models
-  GET  /health                 Health check endpoint
   GET  /v1/models?free=true    List only free models
+  GET  /v1/models?refresh=true Scan providers for latest availability
+  GET  /v1/freemodels          List free tier models with metadata
+  GET  /v1/freemodels?probe=true  Probe free providers for availability
+  GET  /health                 Health check endpoint
+  GET  /quotas                 Quota information
 
 The gateway automatically:
   • Routes to best available provider

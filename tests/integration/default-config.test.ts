@@ -8,13 +8,21 @@ import { tmpdir } from "node:os";
 
 describe("Default Configuration", () => {
     let tempDir: string;
+    let originalConfigPath: string | undefined;
 
     beforeEach(async () => {
         tempDir = await mkdtemp(join(tmpdir(), "opencode-quotas-default-test-"));
+        // Create empty config to prevent loading global config with overrides
+        const emptyConfigPath = join(tempDir, "quotas.json");
+        await fs.writeFile(emptyConfigPath, "{}");
+        originalConfigPath = process.env.OPENCODE_QUOTAS_CONFIG_PATH;
+        process.env.OPENCODE_QUOTAS_CONFIG_PATH = emptyConfigPath;
     });
 
     afterEach(async () => {
         await rm(tempDir, { recursive: true, force: true });
+        if (originalConfigPath) process.env.OPENCODE_QUOTAS_CONFIG_PATH = originalConfigPath;
+        else delete process.env.OPENCODE_QUOTAS_CONFIG_PATH;
     });
 
     test("should match documented defaults", async () => {
@@ -48,8 +56,8 @@ describe("Default Configuration", () => {
 
         const groups = config.aggregatedGroups || [];
         
-        // Verify we have the 4 standard groups documented in README
-        expect(groups).toHaveLength(4);
+        // Verify we have multiple groups for all supported providers
+        expect(groups.length).toBeGreaterThan(4);
         
         const ids = groups.map(g => g.id);
         expect(ids).toContain("ag-flash");

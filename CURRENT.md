@@ -3,21 +3,42 @@
 ## Project Overview
 
 **Project:** OpenCode Enhanced Quotas - API Gateway for intelligent LLM routing  
-**Location:** `/home/ethan/documents/personal/github/opencode-testing/opencode-enhanced-quotas`  
+**Location:** `/home/ethan/documents/personal/github/opencode/quotas`  
 **Build Status:** ✅ PASSING  
-**Phase:** Phase 2 Complete (Circuit Breaker Implementation)
+**Phase:** Phase 2.5 Complete - Gateway Fully Functional
 
 ---
 
 ## Executive Summary
 
 Build an intelligent API Gateway that routes LLM requests to free providers with:
-- Automatic failover between providers
-- Dead/retired model exclusion (permanent)
-- Rate limiting and timeout handling
-- Per-model circuit breakers
-- OpenAI-compatible endpoints
-- Persistent state tracking
+- Automatic failover between providers ✅
+- Dead/retired model exclusion (permanent) ✅
+- Rate limiting and timeout handling ✅
+- Per-model circuit breakers ✅
+- OpenAI-compatible endpoints ✅
+- Persistent state tracking ✅
+- `/v1/freemodels` endpoint for free tier model discovery ✅
+- Working chat completions with auto-routing ✅
+
+---
+
+## Latest Session Summary (Feb 20, 2026)
+
+### Fixes Applied:
+1. **ESM Module Resolution** - Fixed missing `.js` extensions in imports across 6 files
+2. **ESM Compatibility** - Replaced `require()` with static `import` for http/https modules
+3. **Model ID Injection** - Fixed gateway to pass actual model ID to providers instead of "auto"
+4. **Added `/v1/freemodels` endpoint** - Returns free models with extended metadata
+
+### Verified Working:
+- Gateway starts and discovers 69 models across 5 providers
+- Chat completions successfully route through providers
+- Auto-routing finds working models and returns responses
+
+### Provider Keys Configured:
+- Cerebras, Fireworks, OpenRouter, Mistral, Together, DeepInfra, Cloudflare, NVIDIA NIM, HuggingFace
+- Keys saved to `~/.config/opencode/provider-keys.env`
 
 ---
 
@@ -326,8 +347,30 @@ Currently implemented in `src/gateway/server.ts`:
 |----------|--------|-------------|
 | `/v1/chat/completions` | POST | Chat completions with auto-routing |
 | `/v1/models` | GET | List available models |
+| `/v1/models?free=true` | GET | List only free tier models |
+| `/v1/models?refresh=true` | GET | Rescan providers for latest availability |
+| `/v1/freemodels` | GET | List free tier models with extended metadata |
+| `/v1/freemodels?probe=true` | GET | Probe free providers for live availability |
 | `/health` | GET | Health check |
 | `/quotas` | GET | Quota info (stub) |
+
+**Free Models Response Format:**
+```json
+{
+  "object": "list",
+  "data": [{
+    "id": "llama-3.1-8b-instant",
+    "object": "model",
+    "owned_by": "groq",
+    "is_free": true,
+    "is_available": true,
+    "avg_latency_ms": 450,
+    "is_rate_limited": false,
+    "error_count": 0,
+    "timeout_count": 0
+  }]
+}
+```
 
 **Request Routing:**
 - `model: "auto"` - Intelligent routing to best available provider
@@ -360,6 +403,7 @@ Need to check for: "retired", "deprecated", "no longer available", "model not fo
 |-------|----------|--------|-------------|
 | 1 | Critical | ✅ Complete | Fix type errors & stabilize build |
 | 2 | High | ✅ Complete | Circuit breaker implementation |
+| 2.5 | High | ✅ Complete | `/v1/freemodels` gateway endpoint |
 | 3 | High | 🔜 Next | Smart routing (priority, latency, cost) |
 | 4 | Medium | Pending | Complete OpenAI compatibility |
 | 5 | Medium | Pending | Observability & production readiness |
@@ -373,6 +417,7 @@ Need to check for: "retired", "deprecated", "no longer available", "model not fo
 1. Create routing strategies (priority, least-latency, cost-aware, fallback)
 2. Enhance `/v1/chat/completions` with better routing logic
 3. Add provider health scoring
+4. Integrate circuit breakers into routing decisions
 
 ### Implementation Plan:
 1. Create `src/gateway/router.ts` with:
@@ -380,11 +425,12 @@ Need to check for: "retired", "deprecated", "no longer available", "model not fo
    - Least-latency routing
    - Cost-aware routing (prefer free)
    - Fallback chain
+   - Circuit breaker integration
 
 2. Enhance server.ts:
-   - Support `model: "auto"` for intelligent routing
+   - Use circuit breakers in `routeToBestProvider`
    - Add request timeout handling per-provider
-   - Use circuit breakers in routing logic
+   - Integrate health scoring into model selection
 
 3. Add provider health scoring:
    - Latency EMA
@@ -397,11 +443,11 @@ Need to check for: "retired", "deprecated", "no longer available", "model not fo
 
 ```bash
 # Build
-cd opencode-enhanced-quotas
+cd quotas
 npm run build
 
-# Start gateway (once serve command is implemented)
-npm run serve
+# Start gateway
+node dist/cli.js serve --port 3000
 # or
 npx opencode-quotas serve --port 3000
 
@@ -410,6 +456,9 @@ curl http://localhost:3000/health
 
 # Test models endpoint
 curl http://localhost:3000/v1/models
+
+# Test free models endpoint
+curl http://localhost:3000/v1/freemodels
 
 # Test chat completions
 curl -X POST http://localhost:3000/v1/chat/completions \
@@ -437,18 +486,30 @@ interface GatewayConfig {
 
 ---
 
+## ESM Module Resolution Fixes
+
+Several source files were missing `.js` extensions in imports (required for ESM). Fixed files:
+- `src/discovery/index.ts` - Added `.js` to re-exports
+- `src/discovery/balance-checker.ts` - Fixed relative imports
+- `src/discovery/model-discovery.ts` - Fixed relative imports
+- `src/state/model-state.ts` - Fixed relative imports
+- `src/commands/models.ts` - Fixed relative imports
+- `src/models/model-manager.ts` - Fixed relative imports
+
+---
+
 ## Dependencies
 
 Key dependencies (from package.json):
 - `typescript` - TypeScript compiler
 - `node` - Runtime (v18+)
+- `@opencode-ai/plugin` - Plugin SDK
+- `@opencode-ai/sdk` - OpenCode SDK
 - Standard library: `http`, `https`, `fs/promises`, `path`, `os`
-
-No external npm packages required for core functionality.
 
 ---
 
-## Notes for Migration
+## Notes for Integration
 
 1. **State File:** Model states are stored in `~/.config/opencode/model-states.json`
 2. **No Database:** Uses file-based persistence (JSON)
@@ -456,16 +517,25 @@ No external npm packages required for core functionality.
 4. **Circuit Breakers:** In-memory only (reset on restart)
 5. **No Auth:** Gateway currently has no authentication
 6. **CORS:** Enabled for all origins (`Access-Control-Allow-Origin: *`)
+7. **API Keys:** Required per-provider (env vars or config files)
+
+---
+
+## Known Issues
+
+1. **No API Keys Configured:** Gateway shows 0 models without provider API keys
+2. **Circuit Breakers Not Used in Routing:** Phase 3 work needed
+3. **No Streaming Support:** Chat completions don't support streaming yet
 
 ---
 
 ## Contact / Context
 
-This document was generated during Phase 2 implementation. For questions or context:
+For questions or context:
 - See `PHASES.md` for full implementation plan
 - See `src/gateway/server.ts` for API implementation
 - See `src/gateway/circuit-breaker.ts` for circuit breaker logic
 - See `src/state/model-state.ts` for state management
 
-**Last Updated:** Phase 2 Complete
+**Last Updated:** Phase 2.5 Complete (/freemodels endpoint)
 **Build Status:** ✅ PASSING

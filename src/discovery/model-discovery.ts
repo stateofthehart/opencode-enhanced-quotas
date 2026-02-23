@@ -4,8 +4,8 @@ import type {
     ModelInfo,
     ProviderDiscoveryConfig,
     ProviderModelList,
-} from "../interfaces";
-import { logger } from "../logger";
+} from "../interfaces.js";
+import { logger } from "../logger.js";
 
 const PROVIDER_DISCOVERY_CONFIGS: Record<string, ProviderDiscoveryConfig> = {
     groq: {

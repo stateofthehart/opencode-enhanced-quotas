@@ -1,5 +1,6 @@
 import { type IQuotaProvider, type QuotaData, type IHistoryService } from "./interfaces.js";
 import { validateQuotaData } from "./utils/validation.js";
+import { fetchQuotasFromGateway } from "./gateway-client.js";
 
 import { logger } from "./logger.js";
 
@@ -13,6 +14,7 @@ type QuotaCacheOptions = {
     refreshIntervalMs: number;
     historyService?: IHistoryService;
     debug?: boolean;
+    gatewayUrl?: string;
 };
 
 const DEFAULT_OPTIONS: QuotaCacheOptions = {
@@ -82,43 +84,55 @@ export class QuotaCache {
 
     private async doRefresh(): Promise<void> {
         try {
-            const results = await Promise.all(
-                this.providers.map(async (p: IQuotaProvider) => {
-                    const startedAt = Date.now();
-                    try {
-                        logger.debug(
-                            "cache:provider_fetch_start",
-                            { id: p.id },
-                        );
-                        const result = await p.fetchQuota();
-                        logger.debug(
-                            "cache:provider_fetch_ok",
-                            {
-                                id: p.id,
-                                count: result.length,
-                                durationMs: Date.now() - startedAt,
-                            },
-                        );
-                        return result;
-                    } catch (e) {
-                        logger.error(
-                            "cache:provider_fetch_error",
-                            {
-                                id: p.id,
-                                durationMs: Date.now() - startedAt,
-                                error: e,
-                            },
-                        );
-                        return [];
-                    }
-                }),
-            );
+            let validatedData: QuotaData[];
+            
+            // Use gateway if configured
+            if (this.options.gatewayUrl) {
+                logger.debug("cache:using_gateway", { url: this.options.gatewayUrl });
+                const quotas = await fetchQuotasFromGateway(this.options.gatewayUrl);
+                validatedData = quotas
+                    .map(d => validateQuotaData(d))
+                    .filter((v): v is QuotaData => v !== null);
+            } else {
+                // Fetch from individual providers
+                const results = await Promise.all(
+                    this.providers.map(async (p: IQuotaProvider) => {
+                        const startedAt = Date.now();
+                        try {
+                            logger.debug(
+                                "cache:provider_fetch_start",
+                                { id: p.id },
+                            );
+                            const result = await p.fetchQuota();
+                            logger.debug(
+                                "cache:provider_fetch_ok",
+                                {
+                                    id: p.id,
+                                    count: result.length,
+                                    durationMs: Date.now() - startedAt,
+                                },
+                            );
+                            return result;
+                        } catch (e) {
+                            logger.error(
+                                "cache:provider_fetch_error",
+                                {
+                                    id: p.id,
+                                    durationMs: Date.now() - startedAt,
+                                    error: e,
+                                },
+                            );
+                            return [];
+                        }
+                    }),
+                );
 
-            // Validate and normalize provider responses before storing
-            const flattened = results.flat();
-            const validatedData = flattened
-                .map(d => validateQuotaData(d))
-                .filter((v): v is QuotaData => v !== null);
+                // Validate and normalize provider responses before storing
+                const flattened = results.flat();
+                validatedData = flattened
+                    .map(d => validateQuotaData(d))
+                    .filter((v): v is QuotaData => v !== null);
+            }
 
             this.state = {
                 data: validatedData,

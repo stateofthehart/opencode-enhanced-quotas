@@ -5,13 +5,13 @@ import {
   ModelState,
   ModelFilterOptions,
   IModelStateTracker,
-} from '../interfaces';
+} from '../interfaces.js';
 import {
   CircuitBreakerRegistry,
   CircuitBreakerStats,
   CircuitState,
   DEFAULT_CIRCUIT_CONFIG
-} from '../gateway/circuit-breaker';
+} from '../gateway/circuit-breaker.js';
 
 const STATE_FILE = path.join(
   homedir(),

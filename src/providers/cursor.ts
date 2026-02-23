@@ -97,9 +97,10 @@ function buildAuthFromToken(token: string): CursorAuth | null {
     logger.debug("[cursor] Token expired", { exp });
   }
 
+  // Cursor expects the raw sub with :: separator, NOT URL-encoded
   return {
     userId: sub,
-    cookie: `WorkosCursorSessionToken=${encodeURIComponent(sub)}%3A%3A${token}`,
+    cookie: `WorkosCursorSessionToken=${sub}::${token}`,
   };
 }
 
@@ -157,8 +158,8 @@ async function getAuth(): Promise<CursorAuth | null> {
   // 1. Env var
   const envCookie = process.env.CURSOR_COOKIE;
   if (envCookie) {
-    const match = envCookie.match(/WorkosCursorSessionToken=([^:]+)%3A%3A/);
-    const userId = match ? decodeURIComponent(match[1]) : "unknown";
+    const match = envCookie.match(/WorkosCursorSessionToken=([^:]+)::/);
+    const userId = match ? match[1] : "unknown";
     return { userId, cookie: envCookie };
   }
 
@@ -175,24 +176,40 @@ async function getAuth(): Promise<CursorAuth | null> {
     // ignore
   }
 
-  // 3. Browser cookies (CodexBar-style primary source for usage API)
+  // 3. cursor-agent config (preferred for headless/CLI usage)
+  const agentAuth = await readTokenFromAgentFiles();
+  if (agentAuth) {
+    logger.debug("[cursor] Found auth in agent files");
+    return agentAuth;
+  }
+
+  // 4. Browser cookies (CodexBar-style, may have decryption issues on Linux)
   try {
     const { buildCursorCookieHeader } = await import("../utils/cursor-auth.js");
     const browserCookie = await buildCursorCookieHeader();
     if (browserCookie) {
-      logger.debug("[cursor] Found browser cookie auth");
-      // Extract userId from cookie
-      const match = browserCookie.match(/WorkosCursorSessionToken=([^:]+)%3A%3A/);
-      const userId = match ? decodeURIComponent(match[1]) : "unknown";
-      return { userId, cookie: browserCookie };
+      // Validate cookie has no invalid characters
+      let hasInvalidChars = false;
+      for (let i = 0; i < browserCookie.length; i++) {
+        const code = browserCookie.charCodeAt(i);
+        if (code > 255 || code === 65533) {
+          hasInvalidChars = true;
+          break;
+        }
+      }
+      
+      if (!hasInvalidChars) {
+        logger.debug("[cursor] Found browser cookie auth");
+        const match = browserCookie.match(/WorkosCursorSessionToken=([^:]+)::/);
+        const userId = match ? match[1] : "unknown";
+        return { userId, cookie: browserCookie };
+      } else {
+        logger.debug("[cursor] Browser cookie has invalid chars, skipping");
+      }
     }
   } catch (e) {
     logger.debug("[cursor] Browser cookie auth failed", { error: e });
   }
-
-  // 4. cursor-agent config (headless fallback; may not work for usage API)
-  const agentAuth = await readTokenFromAgentFiles();
-  if (agentAuth) return agentAuth;
 
   // 5. Cursor IDE database
   return readTokenFromIdeDb();

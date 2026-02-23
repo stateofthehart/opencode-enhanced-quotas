@@ -4,9 +4,10 @@
  */
 
 import http from 'http';
+import https from 'https';
 import { URL } from 'url';
 import { getModelDiscovery } from '../discovery/index.js';
-import { getProber, getApiKey } from '../probe/prober.js';
+import { getProber, getApiKey, PROVIDER_CAPABILITIES } from '../probe/prober.js';
 import { createModelManager, TrackedModel } from '../models/model-manager.js';
 import type { 
   ProviderDiscoveryConfig, 
@@ -14,7 +15,6 @@ import type {
   ChatCompletionResponse,
   ModelListResponse
 } from '../interfaces.js';
-import { PROVIDER_CAPABILITIES } from '../probe/prober.js';
 
 export interface GatewayConfig {
   port: number;
@@ -27,10 +27,28 @@ export interface GatewayConfig {
 const DEFAULT_CONFIG: GatewayConfig = {
   port: 3000,
   host: 'localhost',
-  requestTimeout: 30000,
+  requestTimeout: 10000,  // 10s per request for faster failover
   maxRetries: 3,
   retryDelay: 1000
 };
+
+// Known working models - prioritized for reliability
+const KNOWN_WORKING_MODELS: { provider: string; modelId: string; priority: number }[] = [
+  // Cerebras - very fast, reliable
+  { provider: 'cerebras', modelId: 'llama3.1-8b', priority: 1 },
+  
+  // OpenRouter - free models
+  { provider: 'openrouter', modelId: 'openrouter/free', priority: 2 },
+  
+  // Mistral
+  { provider: 'mistral', modelId: 'mistral-small-latest', priority: 3 },
+  
+  // Together
+  { provider: 'together', modelId: 'meta-llama/Llama-3-8b-chat-hf', priority: 4 },
+  
+  // DeepInfra
+  { provider: 'deepinfra', modelId: 'meta-llama/Llama-3-8b-chat-hf', priority: 5 },
+];
 
 interface RouteResult {
   provider: string;
@@ -61,13 +79,21 @@ export class ApiGateway {
     return new Promise((resolve, reject) => {
       this.server = http.createServer((req, res) => this.handleRequest(req, res));
       
-      this.server.listen(this.config.port, this.config.host, () => {
+      this.server.listen(this.config.port, this.config.host, async () => {
         console.log(`🚀 API Gateway running on http://${this.config.host}:${this.config.port}`);
         console.log(`📍 Endpoints:`);
         console.log(`   - POST /v1/chat/completions`);
         console.log(`   - GET  /v1/models`);
+        console.log(`   - GET  /v1/models?free=true`);
+        console.log(`   - GET  /v1/freemodels`);
         console.log(`   - GET  /health`);
         console.log(`   - GET  /quotas`);
+        
+        // Initial model discovery (don't wait for it)
+        this.initialDiscovery().catch(err => {
+          console.warn('Initial discovery failed:', err.message);
+        });
+        
         resolve();
       });
 
@@ -76,6 +102,49 @@ export class ApiGateway {
       // Start background health checks
       this.startHealthChecks();
     });
+  }
+
+  private async initialDiscovery(): Promise<void> {
+    console.log('🔍 Performing initial model discovery...');
+    
+    // Get all providers that support probing and have API keys
+    const probeableProviders = PROVIDER_CAPABILITIES
+      .filter(c => c.supportsProbe)
+      .map(c => c.id);
+    
+    // Check which providers have API keys
+    const providersWithKeys: string[] = [];
+    for (const provider of probeableProviders) {
+      const key = await getApiKey(provider);
+      if (key) {
+        providersWithKeys.push(provider);
+      }
+    }
+    
+    if (providersWithKeys.length > 0) {
+      console.log(`📋 Found API keys for: ${providersWithKeys.join(', ')}`);
+      
+      // Quick discovery without full probing - just get model lists
+      const discovery = getModelDiscovery(async (p) => getApiKey(p));
+      let totalModels = 0;
+      
+      for (const provider of providersWithKeys) {
+        try {
+          const result = await discovery.discoverModels(provider);
+          if (result.models.length > 0) {
+            totalModels += result.models.length;
+            // Add models to state tracker as available
+            for (const model of result.models) {
+              this.modelManager.recordSuccess(provider, model.id, 0);
+            }
+          }
+        } catch (err) {
+          // Silently skip providers that fail
+        }
+      }
+      
+      console.log(`✅ Discovered ${totalModels} models from ${providersWithKeys.length} providers`);
+    }
   }
 
   async stop(): Promise<void> {
@@ -120,7 +189,15 @@ export class ApiGateway {
           
         case '/v1/models':
           if (req.method === 'GET') {
-            await this.handleListModels(req, res);
+            await this.handleListModels(req, res, url);
+          } else {
+            this.sendError(res, 405, 'Method not allowed');
+          }
+          break;
+
+        case '/v1/freemodels':
+          if (req.method === 'GET') {
+            await this.handleFreeModels(req, res, url);
           } else {
             this.sendError(res, 405, 'Method not allowed');
           }
@@ -166,16 +243,48 @@ export class ApiGateway {
     body: ChatCompletionRequest, 
     res: http.ServerResponse
   ): Promise<void> {
-    // Get available models sorted by latency and status
-    const models = await this.modelManager.getAvailableModels();
+    // Get available models
+    const allModels = await this.modelManager.getAvailableModels();
     
-    if (models.length === 0) {
+    if (allModels.length === 0) {
       this.sendError(res, 503, 'No providers available');
       return;
     }
 
-    // Try each model in order (already sorted by quality)
-    for (const model of models) {
+    // Prioritize known working models
+    const prioritizedModels: TrackedModel[] = [];
+    const seenKeys = new Set<string>();
+    
+    // First add known working models that have API keys
+    for (const known of KNOWN_WORKING_MODELS.sort((a, b) => a.priority - b.priority)) {
+      const key = `${known.provider}:${known.modelId}`;
+      const model = allModels.find(m => 
+        m.provider === known.provider && 
+        (m.modelId === known.modelId || m.modelId.endsWith(known.modelId))
+      );
+      if (model && !seenKeys.has(key)) {
+        prioritizedModels.push(model);
+        seenKeys.add(key);
+      }
+    }
+    
+    // Then add remaining models
+    for (const model of allModels) {
+      const key = `${model.provider}:${model.modelId}`;
+      if (!seenKeys.has(key)) {
+        prioritizedModels.push(model);
+        seenKeys.add(key);
+      }
+    }
+
+    // Try each model in priority order
+    let attempts = 0;
+    const maxAttempts = 20; // Don't try forever
+    
+    for (const model of prioritizedModels) {
+      if (attempts >= maxAttempts) break;
+      attempts++;
+      
       const startTime = Date.now();
       try {
         const result = await this.proxyRequest(model, body, res);
@@ -237,8 +346,11 @@ export class ApiGateway {
       return false;
     }
 
+    // Replace model name with actual model ID for the provider
+    const bodyWithModel = { ...body, model: route.model };
+
     // Transform request for specific provider if needed
-    const transformedBody = this.transformRequest(body, route.provider);
+    const transformedBody = this.transformRequest(bodyWithModel, route.provider);
     
     // Make the request
     const response = await this.makeProviderRequest(route, transformedBody);
@@ -397,7 +509,7 @@ export class ApiGateway {
         timeout: this.config.requestTimeout
       };
 
-      const client = url.protocol === 'https:' ? require('https') : require('http');
+      const client = url.protocol === 'https:' ? https : http;
       
       const req = client.request(options, (res: http.IncomingMessage) => {
         let data = '';
@@ -412,7 +524,10 @@ export class ApiGateway {
               const json = JSON.parse(data);
               resolve(json);
             } else {
-              console.log(`Provider returned ${res.statusCode}: ${data}`);
+              // Only log non-404 errors verbosely
+              if (res.statusCode !== 404) {
+                console.log(`Provider returned ${res.statusCode}: ${data.slice(0, 200)}`);
+              }
               resolve(null);
             }
           } catch {
@@ -436,25 +551,90 @@ export class ApiGateway {
     });
   }
 
-  private async handleListModels(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-    const models = await this.modelManager.getAvailableModels();
+  private async handleListModels(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    const onlyFree = url.searchParams.get('free') === 'true';
+    const onlyAvailable = url.searchParams.get('available') !== 'false';
+    const refresh = url.searchParams.get('refresh') === 'true';
     
-    const response: ModelListResponse = {
-      object: 'list',
-      data: models.map(m => ({
-        id: m.modelId,
-        object: 'model',
-        created: Math.floor(Date.now() / 1000),
-        owned_by: m.provider,
-        permission: [],
-        root: m.modelId,
-        parent: null
-      }))
-    };
-
+    let models: TrackedModel[];
+    
+    if (refresh) {
+      const probeableProviders = PROVIDER_CAPABILITIES
+        .filter(c => c.supportsProbe && (onlyFree ? c.isFreeTier : true))
+        .map(c => c.id);
+      models = await this.modelManager.scanAllProviders(probeableProviders);
+      if (onlyFree) {
+        models = models.filter(m => m.isFree);
+      }
+    } else if (onlyFree) {
+      models = await this.modelManager.getFreeModels();
+    } else {
+      models = await this.modelManager.getAvailableModels({
+        onlyAvailable,
+        excludeRateLimited: true,
+        excludeTimeouts: true,
+      });
+    }
+    
+    const response = this.buildModelListResponse(models);
     res.setHeader('Content-Type', 'application/json');
     res.writeHead(200);
     res.end(JSON.stringify(response));
+  }
+
+  private async handleFreeModels(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    const refresh = url.searchParams.get('refresh') === 'true';
+    const probe = url.searchParams.get('probe') === 'true';
+    
+    let models: TrackedModel[];
+    
+    if (refresh || probe) {
+      const probeableProviders = PROVIDER_CAPABILITIES
+        .filter(c => c.supportsProbe && c.isFreeTier)
+        .map(c => c.id);
+      models = await this.modelManager.scanAllProviders(probeableProviders);
+      models = models.filter(m => m.isFree);
+    } else {
+      models = await this.modelManager.getFreeModels();
+    }
+    
+    const response = this.buildModelListResponse(models, true);
+    res.setHeader('Content-Type', 'application/json');
+    res.writeHead(200);
+    res.end(JSON.stringify(response));
+  }
+
+  private buildModelListResponse(models: TrackedModel[], includeMetadata: boolean = false): any {
+    const baseResponse = {
+      object: 'list' as const,
+      data: models.map(m => {
+        const base: any = {
+          id: m.modelId,
+          object: 'model',
+          created: Math.floor(Date.now() / 1000),
+          owned_by: m.provider,
+          permission: [],
+          root: m.modelId,
+          parent: null
+        };
+        
+        if (includeMetadata) {
+          base.is_free = m.isFree;
+          base.is_available = m.isAvailable;
+          base.avg_latency_ms = m.avgLatencyMs;
+          base.is_rate_limited = m.isRateLimited;
+          if (m.rateLimitReset) {
+            base.rate_limit_reset = m.rateLimitReset.toISOString();
+          }
+          base.error_count = m.errorCount;
+          base.timeout_count = m.timeoutCount;
+        }
+        
+        return base;
+      })
+    };
+    
+    return baseResponse;
   }
 
   private async handleHealth(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {

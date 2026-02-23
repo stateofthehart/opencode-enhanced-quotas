@@ -34,6 +34,7 @@ import { logger } from "../logger.js";
 import { LinearRegressionPredictionEngine, NullPredictionEngine } from "./prediction-engine.js";
 import { AggregationService } from "./aggregation-service.js";
 import { ConfigLoader } from "./config-loader.js";
+import { fetchQuotasFromGateway } from "../gateway-client.js";
 
 export class QuotaService {
     private config: QuotaConfig;
@@ -42,6 +43,7 @@ export class QuotaService {
     private historyService?: IHistoryService;
     private predictionEngine: IPredictionEngine;
     private aggregationService: IAggregationService;
+    private usingGateway: boolean = false;
 
     constructor(initialConfig?: Partial<QuotaConfig>) {
         this.config = ConfigLoader.createConfig(initialConfig);
@@ -298,6 +300,13 @@ export class QuotaService {
     }
 
     private async fetchRawQuotas(): Promise<QuotaData[]> {
+        if (this.config.gatewayUrl) {
+            logger.debug("quota_service:using_gateway", { url: this.config.gatewayUrl });
+            this.usingGateway = true;
+            return fetchQuotasFromGateway(this.config.gatewayUrl);
+        }
+
+        this.usingGateway = false;
         const providers = this.getProviders();
 
         logger.debug(
@@ -395,8 +404,10 @@ export class QuotaService {
             return q;
         });
 
-        // 2. Apply Aggregation
-        results = this.applyAggregation(results);
+        // 2. Apply Aggregation (skip if using gateway - data is pre-aggregated)
+        if (!this.config.gatewayUrl) {
+            results = this.applyAggregation(results);
+        }
 
         // 3. Filter (disabled quotas + optional model filtering).
         results = this.filterQuotas(results, context);
@@ -408,6 +419,11 @@ export class QuotaService {
     }
 
     private applyAggregation(quotas: QuotaData[]): QuotaData[] {
+        // Skip aggregation when using gateway (gateway returns pre-aggregated data)
+        if (this.usingGateway) {
+            return quotas;
+        }
+
         if (!this.config.aggregatedGroups || this.config.aggregatedGroups.length === 0) {
             return quotas;
         }

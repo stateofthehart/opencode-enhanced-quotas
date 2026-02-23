@@ -45,6 +45,11 @@ export type QuotaColumn =
 export interface QuotaConfig {
     displayMode: QuotaDisplayMode;
     progressBar?: ProgressBarConfig;
+    /**
+     * Gateway URL to fetch quotas from instead of querying providers directly.
+     * If set, the plugin will fetch quotas from the gateway's /quotas endpoint.
+     */
+    gatewayUrl?: string;
     table?: {
         /**
          * Columns to display in the quota table.

@@ -167,6 +167,9 @@ export class ConfigLoader {
         if (userConfig.pollingInterval !== undefined) {
             target.pollingInterval = userConfig.pollingInterval;
         }
+        if (userConfig.gatewayUrl !== undefined) {
+            target.gatewayUrl = userConfig.gatewayUrl;
+        }
     }
 
     /**

@@ -1,6 +1,6 @@
-import { getModelDiscovery } from '../discovery';
-import { getProber } from '../probe';
-import { getModelStateTracker } from '../state/model-state';
+import { getModelDiscovery } from '../discovery/index.js';
+import { getProber } from '../probe/index.js';
+import { getModelStateTracker } from '../state/model-state.js';
 import {
   DiscoveredModel,
   ModelState,
@@ -10,7 +10,7 @@ import {
   IModelStateTracker,
   ProviderCapability,
   ProbeResult,
-} from '../interfaces';
+} from '../interfaces.js';
 
 export interface TrackedModel {
   provider: string;

@@ -1,5 +1,5 @@
-import type { BalanceInfo, IBalanceChecker } from "../interfaces";
-import { logger } from "../logger";
+import type { BalanceInfo, IBalanceChecker } from "../interfaces.js";
+import { logger } from "../logger.js";
 
 interface BalanceEndpoint {
     url: string;
