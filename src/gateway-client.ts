@@ -106,6 +106,7 @@ function providerQuotasToQuotaData(providers: ProviderQuota[]): QuotaData[] {
                     limit: rl.limit,
                     unit: rl.type,
                     reset: rl.resetIn,
+                    timeout: rl.resetIn,
                     info: `rate limit (header)`
                 });
             }

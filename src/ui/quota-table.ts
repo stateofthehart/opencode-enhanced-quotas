@@ -8,7 +8,7 @@ type RenderedQuotaLine = {
     line: string;
 };
 
-const DEFAULT_COLUMNS: QuotaColumn[] = ["status", "name", "percent", "bar", "reset", "ettl"];
+const DEFAULT_COLUMNS: QuotaColumn[] = ["status", "name", "percent", "bar", "reset", "ettl", "timeout"];
 const HEADERS: Record<QuotaColumn, string> = {
     name: "QUOTA NAME",
     bar: "UTILIZATION",
@@ -16,6 +16,7 @@ const HEADERS: Record<QuotaColumn, string> = {
     value: "VALUE",
     reset: "RESET",
     ettl: "ETTL",
+    timeout: "TIMEOUT",
     window: "WINDOW",
     info: "INFO",
     status: "ST"
@@ -70,6 +71,10 @@ export function renderQuotaTable(
         // Remove leading 'in ' if present and strip '(predicted)'
         const ettlRaw = validated.predictedReset?.replace(/^in\s+/i, "").replace(/\(predicted\)/, "").trim() || "-";
         const ettl = colorize(ettlRaw, "gray", useColor);
+        
+        // Timeout for rate limits
+        const timeoutRaw = validated.timeout || "";
+        const timeout = colorize(timeoutRaw, timeoutRaw === "now" ? "red" : "yellow", useColor);
 
         return {
             quota: validated,
@@ -87,6 +92,7 @@ export function renderQuotaTable(
                 value: barParts ? barParts.valuePart : `${validated.used} ${validated.unit}`,
                 reset,
                 ettl,
+                timeout,
                 window: validated.window || "",
                 info: validated.info || "",
                 status,
@@ -96,7 +102,7 @@ export function renderQuotaTable(
 
     // 2. Measure widths
     const widths: Record<QuotaColumn, number> = {
-        name: 0, bar: 0, percent: 0, value: 0, reset: 0, window: 0, info: 0, status: 0, ettl: 0
+        name: 0, bar: 0, percent: 0, value: 0, reset: 0, window: 0, info: 0, status: 0, ettl: 0, timeout: 0
     };
 
     // Calculate max widths including headers

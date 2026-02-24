@@ -26,6 +26,12 @@ export interface QuotaData {
     info?: string;
 
     /**
+     * Timeout/rate limit reset time (e.g. "30s", "5m").
+     * Specifically for rate limiting, separate from quota resets.
+     */
+    timeout?: string;
+
+    /**
      * @deprecated Use reset, window, info instead.
      */
     details?: string;
@@ -40,7 +46,8 @@ export type QuotaColumn =
     | "window"
     | "info"
     | "status"
-    | "ettl";
+    | "ettl"
+    | "timeout";
 
 export interface QuotaConfig {
     displayMode: QuotaDisplayMode;
